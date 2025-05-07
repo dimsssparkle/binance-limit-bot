@@ -2,26 +2,23 @@
 app/handlers.py
 
 Бизнес-логика обработки сигналов:
-- Валидация входа через Pydantic.
-- Вызов клиента Binance для выставления лимитного ордера.
-- Обработка ошибок и возврат стандартизированных результатов.
+- Не требует передачи цены из TradingView.
+- Использует функцию calculate_entry_price + Post-Only ордер.
 """
 
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
-from app.binance_client import place_limit_order
+from app.binance_client import place_post_only_order
 
 class Signal(BaseModel):
     """
     Модель сигнала от TradingView:
-    - symbol: валютная пара (например, 'ETHUSDT')
+    - symbol: валютная пара, например 'ETHUSDT'
     - side: 'BUY' или 'SELL'
-    - price: цена лимитного ордера
-    - quantity: количество
+    - quantity: объём ордера
     """
     symbol: str
     side: str
-    price: float
     quantity: float
 
     @validator("side")
@@ -34,26 +31,30 @@ class Signal(BaseModel):
 
 def handle_signal(data: dict) -> dict:
     """
-    Обрабатывает словарь данных сигнала:
-    1. Валидирует через Signal.
-    2. Пытается выставить ордер через place_limit_order.
-    3. Возвращает {'status':'ok','detail':'order_id=...'} или {'status':'error','detail':msg}.
+    Обрабатывает сигнал:
+    1. Валидирует payload без поля price.
+    2. Выставляет Post-Only ордер по вычисленной цене.
+    3. Возвращает {'status':'ok','detail':'order_id=...'} или
+       {'status':'error','detail':'сообщение об ошибке'}.
     """
     try:
         # 1) Валидация входных данных
         sig = Signal(**data)
-        # 2) Выставление ордера на Binance
-        order = place_limit_order(
+
+        # 2) Выставление ордера: цена рассчитывается внутри
+        order = place_post_only_order(
             symbol=sig.symbol,
             side=sig.side,
-            price=sig.price,
             quantity=sig.quantity
         )
+
+        # 3) Формируем успешный ответ
         return {"status": "ok", "detail": f"order_id={order.get('orderId')}"}
 
     except BinanceAPIException as e:
-        # Ошибки API Binance (например, несоответствие фильтрам)
+        # Ошибки Binance API
         return {"status": "error", "detail": f"BinanceAPI: {e.message}"}
+
     except ValueError as e:
-        # Ошибки валидации (payload или PRICE_FILTER)
+        # Ошибки валидации или получения фильтров
         return {"status": "error", "detail": str(e)}
