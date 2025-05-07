@@ -14,6 +14,7 @@ import math
 import time
 import logging
 from datetime import datetime
+from pathlib import Path
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from app.config import settings
@@ -25,19 +26,18 @@ logger.setLevel(settings.log_level)
 # Инициализируем Binance-клиент один раз
 _client = Client(settings.binance_api_key, settings.binance_api_secret)
 
-# Пути к файлам истории в папке data
-DATA_DIR = os.path.join(os.getcwd(), "data")
-ORDER_BOOK_HISTORY = os.path.join(DATA_DIR, "order_book_history.csv")
-POSITION_HISTORY = os.path.join(DATA_DIR, "position_history.csv")
+# Определяем корень проекта и папку data
+BASE_DIR = Path(__file__).resolve().parent.parent  # /app
+DATA_DIR = BASE_DIR / "data"
+ORDER_BOOK_HISTORY = DATA_DIR / "order_book_history.csv"
+POSITION_HISTORY = DATA_DIR / "position_history.csv"
 
 # Создаём папку data и файлы с заголовками, если их нет
-os.makedirs(DATA_DIR, exist_ok=True)
-if not os.path.exists(ORDER_BOOK_HISTORY):
-    with open(ORDER_BOOK_HISTORY, "w") as f:
-        f.write("timestamp,symbol,best_bid,best_ask\n")
-if not os.path.exists(POSITION_HISTORY):
-    with open(POSITION_HISTORY, "w") as f:
-        f.write("timestamp,symbol,positionAmt\n")
+DATA_DIR.mkdir(exist_ok=True)
+if not ORDER_BOOK_HISTORY.exists():
+    ORDER_BOOK_HISTORY.write_text("timestamp,symbol,best_bid,best_ask\n")
+if not POSITION_HISTORY.exists():
+    POSITION_HISTORY.write_text("timestamp,symbol,positionAmt\n")
 
 
 def log_order_book(symbol: str, best_bid: float, best_ask: float):
@@ -45,7 +45,7 @@ def log_order_book(symbol: str, best_bid: float, best_ask: float):
     Добавить в ORDER_BOOK_HISTORY запись о текущем bid/ask.
     """
     ts = datetime.utcnow().isoformat()
-    with open(ORDER_BOOK_HISTORY, "a") as f:
+    with ORDER_BOOK_HISTORY.open("a") as f:
         f.write(f"{ts},{symbol},{best_bid},{best_ask}\n")
 
 
@@ -54,7 +54,7 @@ def log_position(symbol: str, position_amt: float):
     Добавить в POSITION_HISTORY запись о текущей позиции.
     """
     ts = datetime.utcnow().isoformat()
-    with open(POSITION_HISTORY, "a") as f:
+    with POSITION_HISTORY.open("a") as f:
         f.write(f"{ts},{symbol},{position_amt}\n")
 
 
@@ -127,8 +127,10 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
 
 def place_post_only(symbol: str, side: str, quantity: float) -> dict:
     """
-    Выставить Post-Only (GTX) LIMIT-ордер на вход позиции.
-    Отменить старые, вычислить цену, выставить и дождаться fill.
+    Выставить Post-Only (GTX) LIMIT-ордер на вход позиции:
+    1) отменить предыдущие
+    2) вычислить цену
+    3) создать и дождаться fill
     """
     cancel_open_orders(symbol, side)
     price = calculate_price(symbol, side)
@@ -147,8 +149,10 @@ def place_post_only(symbol: str, side: str, quantity: float) -> dict:
 
 def place_post_only_exit(symbol: str, side: str, quantity: float) -> dict:
     """
-    Выставить Post-Only (GTX) LIMIT-ордер на закрытие позиции.
-    Противоположный side, отменить старые, вычислить цену, выставить и дождаться fill.
+    Выставить Post-Only (GTX) LIMIT-ордер на закрытие позиции:
+    1) отменить предыдущие
+    2) вычислить цену выхода
+    3) создать и дождаться fill
     """
     close_side = "SELL" if side.upper() == "BUY" else "BUY"
     cancel_open_orders(symbol, close_side)
