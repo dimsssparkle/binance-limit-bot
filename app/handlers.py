@@ -3,8 +3,8 @@
 """
 app/handlers.py
 
-Бизнес-логика входа/выхода с Post-Only maker-ордерами и авто-флипом.
-Теперь ловим RuntimeError от таймаута ожидания исполнения и возвращаем JSON.
+Бизнес-логика входа/выхода с Post-Only maker-ордерами, авто-флипом и явным action.
+Теперь импортируем place_post_only и place_post_only_exit из binance_client.
 """
 
 from pydantic import BaseModel, validator
@@ -15,12 +15,11 @@ from app.binance_client import (
     place_post_only_exit
 )
 
-
 class Signal(BaseModel):
-    symbol: str               # торговая пара, например 'ETHUSDT'
-    side: str                 # 'BUY' или 'SELL'
-    quantity: float           # объём позиции
-    action: str = 'open'      # 'open' или 'close'
+    symbol: str
+    side: str
+    quantity: float
+    action: str = 'open'
 
     @validator('side')
     def validate_side(cls, v):
@@ -36,14 +35,7 @@ class Signal(BaseModel):
             raise ValueError("Поле 'action' должно быть 'open' или 'close'")
         return v2
 
-
 def handle_signal(data: dict) -> dict:
-    """
-    Логика обработки сигнала:
-    - action='close': закрываем текущую позицию maker-ордером.
-    - action='open': auto-flip (закрытие противоположной позиции + открытие новой).
-    Ошибки BinanceAPI, ValueError и RuntimeError (таймаут) превращаем в JSON.
-    """
     try:
         sig = Signal(**data)
         current_amt = get_position_amount(sig.symbol)
@@ -55,22 +47,19 @@ def handle_signal(data: dict) -> dict:
             return {'status': 'ok', 'detail': f"closed_order_id={order['orderId']}"}
 
         # action == 'open'
-        # 1) Если есть противоположная позиция — закрываем её
         if current_amt < 0 and sig.side == 'BUY':
+            # closing short
             place_post_only_exit(sig.symbol, 'SELL', abs(current_amt))
         elif current_amt > 0 and sig.side == 'SELL':
+            # closing long
             place_post_only_exit(sig.symbol, 'BUY', current_amt)
 
-        # 2) Открываем новую позицию
         order = place_post_only(sig.symbol, sig.side, sig.quantity)
         return {'status': 'ok', 'detail': f"order_id={order['orderId']}"}
 
     except BinanceAPIException as e:
         return {'status': 'error', 'detail': f"BinanceAPI: {e.message}"}
-
     except RuntimeError as e:
-        # Таймаут ожидания исполнения в wait_for_fill
         return {'status': 'error', 'detail': str(e)}
-
     except ValueError as e:
         return {'status': 'error', 'detail': str(e)}
