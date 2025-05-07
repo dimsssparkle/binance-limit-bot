@@ -1,18 +1,21 @@
-# Используем лёгкий образ Python
+# Используем облегчённый образ Python
 FROM python:3.11-slim
 
-# Каталог приложения
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Сначала копируем зависимости и ставим их
+# Копируем файл зависимостей
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем весь остальной код
+# Обновляем pip и устанавливаем все зависимости из requirements.txt
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir -r requirements.txt
+
+# Копируем весь код приложения
 COPY . .
 
-# Открываем порт (должен совпадать с settings.PORT)
+# Пробрасываем порт
 EXPOSE 8000
 
-# Запускаем через Gunicorn для продакшена
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app.main:app"]
+# Запускаем через Gunicorn как модуль Python
+CMD ["python3", "-m", "gunicorn", "--bind", "0.0.0.0:8000", "app.main:app"]
