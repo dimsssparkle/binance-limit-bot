@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, validator
 from app.binance_client import place_limit_order
+from binance.exceptions import BinanceAPIException
 
 class Signal(BaseModel):
     symbol: str
@@ -16,21 +17,25 @@ class Signal(BaseModel):
             raise ValueError("side must be BUY or SELL")
         return v_up
 
-def handle_signal(data: dict) -> str:
+def handle_signal(data: dict) -> dict:
     """
-    Принимает данные из webhook, валидирует их и
-    выставляет лимитный ордер на Binance.
+    Валидирует вход, пытается выставить ордер и возвращает dict:
+    - {'status':'ok','detail':'order_id=...'}
+    - {'status':'error','detail':'<текст ошибки>'}
     """
-    # 1) Валидируем вход
-    signal = Signal(**data)
+    try:
+        sig = Signal(**data)
+        order = place_limit_order(
+            symbol=sig.symbol,
+            side=sig.side,
+            price=sig.price,
+            quantity=sig.quantity
+        )
+        return {"status": "ok", "detail": f"order_id={order.get('orderId')}"}
 
-    # 2) Отправляем ордер
-    order = place_limit_order(
-        symbol=signal.symbol,
-        side=signal.side,
-        price=signal.price,
-        quantity=signal.quantity
-    )
+    except BinanceAPIException as e:
+        return {"status": "error", "detail": f"BinanceAPI: {e.message}"}
 
-    # 3) Возвращаем информацию об ордере
-    return f"order_id={order.get('orderId')}"
+    except ValueError as e:
+        # сюда попадают ошибки PRICE_FILTER и валидатора side
+        return {"status": "error", "detail": str(e)}
