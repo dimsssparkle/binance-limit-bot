@@ -33,7 +33,7 @@ ORDER_BOOK_HISTORY = DATA_DIR / "order_book_history.csv"
 POSITION_HISTORY = DATA_DIR / "position_history.csv"
 
 # Создаём папку data и файлы с заголовками, если их нет
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 if not ORDER_BOOK_HISTORY.exists():
     ORDER_BOOK_HISTORY.write_text("timestamp,symbol,best_bid,best_ask\n")
 if not POSITION_HISTORY.exists():
@@ -128,9 +128,9 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
 def place_post_only(symbol: str, side: str, quantity: float) -> dict:
     """
     Выставить Post-Only (GTX) LIMIT-ордер на вход позиции:
-    1) отменить предыдущие
-    2) вычислить цену
-    3) создать и дождаться fill
+      1) отменить предыдущие
+      2) вычислить цену
+      3) создать и дождаться fill
     """
     cancel_open_orders(symbol, side)
     price = calculate_price(symbol, side)
@@ -150,9 +150,9 @@ def place_post_only(symbol: str, side: str, quantity: float) -> dict:
 def place_post_only_exit(symbol: str, side: str, quantity: float) -> dict:
     """
     Выставить Post-Only (GTX) LIMIT-ордер на закрытие позиции:
-    1) отменить предыдущие
-    2) вычислить цену выхода
-    3) создать и дождаться fill
+      1) отменить предыдущие
+      2) вычислить цену выхода
+      3) создать и дождаться fill
     """
     close_side = "SELL" if side.upper() == "BUY" else "BUY"
     cancel_open_orders(symbol, close_side)
