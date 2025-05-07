@@ -1,13 +1,11 @@
-# app/handlers.py
-
 """
 app/handlers.py
 
-Бизнес-логика входа/выхода с авто-флипом:
-- action = 'open' (по умолчанию): 
-    • если есть противоположная позиция — закрыть её maker-ордером
-    • затем открыть новую maker-ордером
-- action = 'close': закрыть текущую позицию maker-ордером
+Исправленная логика «флипа» позиции:
+1. При action='open' и наличии противоположной позиции:
+   a) Сначала выставляем и дожидаемся fill close-ордера.
+   b) Только после него — выставляем новый open-ордер.
+2. Всё по-прежнему в режиме Post-Only с maker-комиссией.
 """
 
 from pydantic import BaseModel, validator
@@ -20,9 +18,9 @@ from app.binance_client import (
 
 
 class Signal(BaseModel):
-    symbol: str               # торговая пара: e.g. 'ETHUSDT'
+    symbol: str               # например 'ETHUSDT'
     side: str                 # 'BUY' или 'SELL'
-    quantity: float           # объём позиции
+    quantity: float           # объём
     action: str = 'open'      # 'open' или 'close'
 
     @validator('side')
@@ -41,36 +39,36 @@ class Signal(BaseModel):
 
 
 def handle_signal(data: dict) -> dict:
-    """
-    Основная логика:
-    1) Валидировать входной JSON.
-    2) В зависимости от action:
-       - 'close': просто закрыть текущую позицию maker-ордером.
-       - 'open': auto-flip или открытие:
-           a) если есть противоположная позиция — закрыть её
-           b) затем открыть новую позицию
-    3) Вернуть статус и order_id.
-    """
     try:
         sig = Signal(**data)
-        current = get_position_amount(sig.symbol)
+        current_amt = get_position_amount(sig.symbol)
 
+        # 1) Закрытие текущей позиции, если нужно
         if sig.action == 'close':
-            if current == 0:
+            if current_amt == 0:
                 return {'status': 'error', 'detail': 'Нет позиции для закрытия'}
-            order = place_post_only_exit(sig.symbol, sig.side, sig.quantity)
+            close_order = place_post_only_exit(sig.symbol, sig.side, sig.quantity)
+            return {'status': 'ok', 'detail': f"closed_order_id={close_order['orderId']}"}
 
-        else:  # open
-            # 1) Если противоположная позиция — закроем её
-            if current < 0 and sig.side == 'BUY':
-                place_post_only_exit(sig.symbol, 'SELL', abs(current))
-            elif current > 0 and sig.side == 'SELL':
-                place_post_only_exit(sig.symbol, 'BUY', current)
+        # 2) Флип (open) — если есть противоположная позиция, закрываем её первой
+        open_order = None
+        if current_amt < 0 and sig.side == 'BUY':
+            # у нас short, а пришёл BUY — сначала закрытие short
+            place_post_only_exit(sig.symbol, 'SELL', abs(current_amt))
+            # теперь открываем long
+            open_order = place_post_only(sig.symbol, sig.side, sig.quantity)
 
-            # 2) Открываем новую позицию
-            order = place_post_only(sig.symbol, sig.side, sig.quantity)
+        elif current_amt > 0 and sig.side == 'SELL':
+            # у нас long, а пришёл SELL — сначала закрытие long
+            place_post_only_exit(sig.symbol, 'BUY', current_amt)
+            # теперь открываем short
+            open_order = place_post_only(sig.symbol, sig.side, sig.quantity)
 
-        return {'status': 'ok', 'detail': f"order_id={order['orderId']}"}
+        else:
+            # либо позиции нет, либо сигнал совпадает с текущим направлением
+            open_order = place_post_only(sig.symbol, sig.side, sig.quantity)
+
+        return {'status': 'ok', 'detail': f"order_id={open_order['orderId']}"}
 
     except BinanceAPIException as e:
         return {'status': 'error', 'detail': f"BinanceAPI: {e.message}"}
