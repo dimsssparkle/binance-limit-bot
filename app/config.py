@@ -1,20 +1,20 @@
 # app/config.py
 
-from pydantic import Field
-from pydantic_settings import BaseSettings
+import os
+from dotenv import load_dotenv
 
-class Settings(BaseSettings):
-    binance_api_key: str = Field(..., env="BINANCE_API_KEY")
-    binance_api_secret: str = Field(..., env="BINANCE_API_SECRET")
-    webhook_secret: str = Field(..., env="WEBHOOK_SECRET")
-    flask_env: str = Field("production", env="FLASK_ENV")
-    log_level: str = Field("INFO", env="LOG_LEVEL")
-    host: str = Field("0.0.0.0", env="HOST")
-    port: int = Field(8000, env="PORT")
+# В режиме разработки подгружаем .env
+if os.getenv("FLASK_ENV", "").lower() == "development":
+    load_dotenv(".env")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+class Settings:
+    """Простая загрузка из os.environ с дефолтами."""
+    binance_api_key: str = os.environ["BINANCE_API_KEY"]
+    binance_api_secret: str = os.environ["BINANCE_API_SECRET"]
+    webhook_secret: str = os.environ["WEBHOOK_SECRET"]
+    flask_env: str = os.environ.get("FLASK_ENV", "production")
+    log_level: str = os.environ.get("LOG_LEVEL", "INFO")
+    host: str = os.environ.get("HOST", "0.0.0.0")
+    port: int = int(os.environ.get("PORT", "8000"))
 
 settings = Settings()
