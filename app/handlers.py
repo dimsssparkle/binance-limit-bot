@@ -3,8 +3,10 @@
 """
 app/handlers.py
 
-Бизнес-логика входа/выхода с Post-Only maker-ордерами, авто-флипом и явным action.
-Теперь импортируем place_post_only и place_post_only_exit из binance_client.
+Бизнес-логика обработки сигналов:
+- Поддержка action='open' (с авто-флипом) и action='close'.
+- Выставление maker-ордеров (Post-Only) на вход/выход.
+- Обработка ошибок BinanceAPI, ValueError и RuntimeError.
 """
 
 from pydantic import BaseModel, validator
@@ -35,7 +37,14 @@ class Signal(BaseModel):
             raise ValueError("Поле 'action' должно быть 'open' или 'close'")
         return v2
 
+
 def handle_signal(data: dict) -> dict:
+    """
+    Обработка сигнала:
+      - 'close': закрытие текущей позиции maker-ордером.
+      - 'open': авто-флип (закрытие противоположной, затем открытие новой).
+    Возвращает JSON-словарь с status и detail.
+    """
     try:
         sig = Signal(**data)
         current_amt = get_position_amount(sig.symbol)
@@ -48,10 +57,8 @@ def handle_signal(data: dict) -> dict:
 
         # action == 'open'
         if current_amt < 0 and sig.side == 'BUY':
-            # closing short
             place_post_only_exit(sig.symbol, 'SELL', abs(current_amt))
         elif current_amt > 0 and sig.side == 'SELL':
-            # closing long
             place_post_only_exit(sig.symbol, 'BUY', current_amt)
 
         order = place_post_only(sig.symbol, sig.side, sig.quantity)

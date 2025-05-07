@@ -6,11 +6,14 @@ app/binance_client.py
 - Отмена висящих ордеров.
 - Выставление Post-Only лимитных ордеров на вход и выход с ожиданием исполнения и логированием.
 - Получение текущей позиции.
+- Логирование истории стакана и позиций в локальные CSV.
 """
 
+import os
 import math
 import time
 import logging
+from datetime import datetime
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from app.config import settings
@@ -19,17 +22,60 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.log_level)
 
-# Инициализируем клиента один раз
+# Инициализируем Binance-клиент один раз
 _client = Client(settings.binance_api_key, settings.binance_api_secret)
 
+# Пути к файлам истории в папке data
+DATA_DIR = os.path.join(os.getcwd(), "data")
+ORDER_BOOK_HISTORY = os.path.join(DATA_DIR, "order_book_history.csv")
+POSITION_HISTORY = os.path.join(DATA_DIR, "position_history.csv")
+
+# Создаём папку data и файлы с заголовками, если их нет
+os.makedirs(DATA_DIR, exist_ok=True)
+if not os.path.exists(ORDER_BOOK_HISTORY):
+    with open(ORDER_BOOK_HISTORY, "w") as f:
+        f.write("timestamp,symbol,best_bid,best_ask\n")
+if not os.path.exists(POSITION_HISTORY):
+    with open(POSITION_HISTORY, "w") as f:
+        f.write("timestamp,symbol,positionAmt\n")
+
+
+def log_order_book(symbol: str, best_bid: float, best_ask: float):
+    """
+    Добавить в ORDER_BOOK_HISTORY запись о текущем bid/ask.
+    """
+    ts = datetime.utcnow().isoformat()
+    with open(ORDER_BOOK_HISTORY, "a") as f:
+        f.write(f"{ts},{symbol},{best_bid},{best_ask}\n")
+
+
+def log_position(symbol: str, position_amt: float):
+    """
+    Добавить в POSITION_HISTORY запись о текущей позиции.
+    """
+    ts = datetime.utcnow().isoformat()
+    with open(POSITION_HISTORY, "a") as f:
+        f.write(f"{ts},{symbol},{position_amt}\n")
+
+
 def get_price_filter(symbol: str) -> dict:
+    """
+    Получить PRICE_FILTER (minPrice, tickSize и т.д.) из exchangeInfo.
+    """
     info = _client.futures_exchange_info()
     for s in info["symbols"]:
         if s["symbol"] == symbol:
             return next(f for f in s["filters"] if f["filterType"] == "PRICE_FILTER")
     raise ValueError(f"No PRICE_FILTER for symbol {symbol}")
 
+
 def calculate_price(symbol: str, side: str) -> float:
+    """
+    Рассчитать maker-цену:
+      BUY: best_bid - tickSize
+      SELL: best_ask + tickSize
+    И логирование best_bid/best_ask.
+    """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
     book = _client.futures_order_book(symbol=symbol, limit=5)
@@ -37,44 +83,52 @@ def calculate_price(symbol: str, side: str) -> float:
     best_ask = float(book["asks"][0][0])
 
     # Логируем книгу ордеров
-    from app.binance_client import log_order_book
     log_order_book(symbol, best_bid, best_ask)
 
     raw = best_bid - tick if side.upper() == "BUY" else best_ask + tick
     decimals = abs(int(round(math.log10(tick))))
     return float(f"{raw:.{decimals}f}")
 
+
 def cancel_open_orders(symbol: str, side: str = None):
+    """
+    Отменить все висящие LIMIT-ордера для symbol.
+    Если указан side, ограничить отмену только этим направлением.
+    """
     opens = _client.futures_get_open_orders(symbol=symbol)
     for o in opens:
         if o["type"] == "LIMIT" and (side is None or o["side"] == side):
             logger.info(f"Cancelling order {o['orderId']} side={o['side']}")
             _client.futures_cancel_order(symbol=symbol, orderId=o["orderId"])
 
+
 def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interval: float = 0.5):
+    """
+    Опросить статус ордера до FILLED или PARTIALLY_FILLED.
+    Логировать каждую попытку и выбросить RuntimeError по таймауту.
+    """
     deadline = time.time() + timeout
     attempt = 0
-    logger.info(f"Waiting for fill of order {order_id} (timeout={timeout}s)")
     last_status = None
+    logger.info(f"Waiting for fill of order {order_id} (timeout={timeout}s)")
     while time.time() < deadline:
         attempt += 1
         o = _client.futures_get_order(symbol=symbol, orderId=order_id)
         status = o.get("status")
-        logger.info(f"Order {order_id} status check #{attempt}: {status}")
+        logger.info(f"Order {order_id} status #{attempt}: {status}")
         last_status = status
         if status in ("FILLED", "PARTIALLY_FILLED"):
-            logger.info(f"Order {order_id} filled at attempt #{attempt}")
+            logger.info(f"Order {order_id} filled at attempt {attempt}")
             return
         time.sleep(poll_interval)
-    logger.error(f"Order {order_id} not filled within {timeout}s — last status: {last_status}")
+    logger.error(f"Order {order_id} not filled within {timeout}s, last status {last_status}")
     raise RuntimeError(f"Order {order_id} not filled within {timeout}s")
+
 
 def place_post_only(symbol: str, side: str, quantity: float) -> dict:
     """
-    Выставить Post-Only LIMIT-ордер на вход позиции maker-only:
-    - отменяем предыдущие
-    - рассчитываем цену
-    - создаём и ждём fill
+    Выставить Post-Only (GTX) LIMIT-ордер на вход позиции.
+    Отменить старые, вычислить цену, выставить и дождаться fill.
     """
     cancel_open_orders(symbol, side)
     price = calculate_price(symbol, side)
@@ -90,10 +144,11 @@ def place_post_only(symbol: str, side: str, quantity: float) -> dict:
     wait_for_fill(symbol, order["orderId"])
     return order
 
+
 def place_post_only_exit(symbol: str, side: str, quantity: float) -> dict:
     """
-    Выставить Post-Only LIMIT-ордер на закрытие позиции maker-only:
-    закрывающий side = противоположный входному
+    Выставить Post-Only (GTX) LIMIT-ордер на закрытие позиции.
+    Противоположный side, отменить старые, вычислить цену, выставить и дождаться fill.
     """
     close_side = "SELL" if side.upper() == "BUY" else "BUY"
     cancel_open_orders(symbol, close_side)
@@ -110,41 +165,16 @@ def place_post_only_exit(symbol: str, side: str, quantity: float) -> dict:
     wait_for_fill(symbol, order["orderId"])
     return order
 
+
 def get_position_amount(symbol: str) -> float:
+    """
+    Вернуть текущий объём позиции: + для long, - для short. Логировать.
+    """
     positions = _client.futures_position_information()
     for p in positions:
         if p["symbol"] == symbol:
             amt = float(p.get("positionAmt", 0))
-            from app.binance_client import log_position
             log_position(symbol, amt)
             return amt
-    # если нет записи — логируем 0
-    from app.binance_client import log_position
     log_position(symbol, 0.0)
     return 0.0
-
-# функции логирования истории
-ORDER_BOOK_HISTORY = "/app/data/order_book_history.csv"
-POSITION_HISTORY   = "/app/data/position_history.csv"
-
-# инициализация файлов
-import os
-from datetime import datetime
-
-os.makedirs(os.path.dirname(ORDER_BOOK_HISTORY), exist_ok=True)
-if not os.path.exists(ORDER_BOOK_HISTORY):
-    with open(ORDER_BOOK_HISTORY, "w") as f:
-        f.write("timestamp,symbol,best_bid,best_ask\n")
-if not os.path.exists(POSITION_HISTORY):
-    with open(POSITION_HISTORY, "w") as f:
-        f.write("timestamp,symbol,positionAmt\n")
-
-def log_order_book(symbol: str, best_bid: float, best_ask: float):
-    ts = datetime.utcnow().isoformat()
-    with open(ORDER_BOOK_HISTORY, "a") as f:
-        f.write(f"{ts},{symbol},{best_bid},{best_ask}\n")
-
-def log_position(symbol: str, position_amt: float):
-    ts = datetime.utcnow().isoformat()
-    with open(POSITION_HISTORY, "a") as f:
-        f.write(f"{ts},{symbol},{position_amt}\n")
