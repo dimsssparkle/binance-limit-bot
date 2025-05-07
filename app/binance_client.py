@@ -2,7 +2,7 @@
 app/binance_client.py
 
 Обёртка над Binance Futures API.
-Содержит методы для выставления Post-Only ордеров на вход и на выход с учётом смещения цены на тик.
+Содержит методы для выставления Post-Only ордеров и получения текущей позиции.
 """
 
 import math
@@ -13,10 +13,11 @@ from app.config import settings
 # Инициализируем клиента один раз
 _client = Client(settings.binance_api_key, settings.binance_api_secret)
 
+
 def get_price_filter(symbol: str) -> dict:
     """
     Получить PRICE_FILTER из exchangeInfo для заданного символа.
-    В фильтре есть minPrice, maxPrice, tickSize и другие параметры.
+    В фильтре содержатся minPrice, maxPrice, tickSize и другие параметры.
     """
     info = _client.futures_exchange_info()
     for s in info["symbols"]:
@@ -24,7 +25,8 @@ def get_price_filter(symbol: str) -> dict:
             for f in s["filters"]:
                 if f["filterType"] == "PRICE_FILTER":
                     return f
-    raise ValueError(f"No PRICE_FILTER for symbol {symbol}")
+    raise ValueError(f"Нет PRICE_FILTER для символа {symbol}")
+
 
 def calculate_entry_price(symbol: str, side: str) -> float:
     """
@@ -43,34 +45,30 @@ def calculate_entry_price(symbol: str, side: str) -> float:
     else:
         raw = best_ask + tick_size
 
-    # Форматируем по precision tickSize
     decimals = abs(int(round(math.log10(tick_size))))
     return float(f"{raw:.{decimals}f}")
 
+
 def calculate_exit_price(symbol: str, side: str) -> float:
     """
-    Рассчитать цену выхода, то есть зеркально входу:
-    - Если позиция была BUY, закрываем SELL по (best_ask + tickSize)
-    - Если позиция была SELL, закрываем BUY по (best_bid - tickSize)
+    Рассчитать цену выхода на противоположном side:
+    - Для закрытия BUY позиции: SELL по best_ask + tickSize
+    - Для закрытия SELL позиции: BUY по best_bid - tickSize
     """
-    # Для выхода нужно противоположное направление
     opposite = "SELL" if side.upper() == "BUY" else "BUY"
     return calculate_entry_price(symbol, opposite)
 
-def place_post_only_smart_order(symbol: str, side: str, quantity: float) -> dict:
+
+def place_post_only_order(symbol: str, side: str, quantity: float) -> dict:
     """
-    Выставить Post-Only LIMIT-ордер на вход или выход.
-    Если side = исходная сторона позиции, то это вход.
-    Если side = 'close', то в handlers передаётся исходный side и сюда приходит 'close',
-    но лучше различать в handlers.
+    Выставить Post-Only LIMIT ордер на вход позиции.
     """
-    # Здесь предполагаем, что `side` — это реальный side ордера.
     price = calculate_entry_price(symbol, side)
     params = {
         "symbol": symbol,
         "side": side,
         "type": "LIMIT",
-        "timeInForce": "GTX",  # Post Only
+        "timeInForce": "GTX",
         "price": str(price),
         "quantity": str(quantity),
     }
@@ -79,27 +77,34 @@ def place_post_only_smart_order(symbol: str, side: str, quantity: float) -> dict
     except BinanceAPIException:
         raise
 
-def place_post_only_smart_exit(symbol: str, side: str, quantity: float) -> dict:
+
+def place_post_only_exit(symbol: str, side: str, quantity: float) -> dict:
     """
-    Выставить Post-Only LIMIT-ордер на закрытие позиции:
-    - вычисляем exit_price
-    - выставляем SELL если позиция BUY и наоборот
+    Выставить Post-Only LIMIT ордер на закрытие позиции.
     """
     exit_price = calculate_exit_price(symbol, side)
     close_side = "SELL" if side.upper() == "BUY" else "BUY"
-    pf = get_price_filter(symbol)
-    # формат exit_price уже сделан в calculate_exit_price
-    price_str = str(exit_price)
-
     params = {
         "symbol": symbol,
         "side": close_side,
         "type": "LIMIT",
         "timeInForce": "GTX",
-        "price": price_str,
+        "price": str(exit_price),
         "quantity": str(quantity),
     }
     try:
         return _client.futures_create_order(**params)
     except BinanceAPIException:
         raise
+
+
+def get_position_amount(symbol: str) -> float:
+    """
+    Получить текущий объём позиции для заданного символа:
+    возвращает положительное значение для long, отрицательное для short.
+    """
+    positions = _client.futures_position_information()
+    for p in positions:
+        if p["symbol"] == symbol:
+            return float(p.get("positionAmt", 0))
+    return 0.0
