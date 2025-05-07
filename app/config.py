@@ -1,12 +1,7 @@
-import os
+# app/config.py
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
-
-
-# Загружаем .env только в режиме разработки
-if os.getenv("FLASK_ENV", "").lower() == "development":
-    from dotenv import load_dotenv  # локальная зависимость
-    load_dotenv(".env")
 
 class Settings(BaseSettings):
     binance_api_key: str = Field(..., env="BINANCE_API_KEY")
@@ -18,8 +13,8 @@ class Settings(BaseSettings):
     port: int = Field(8000, env="PORT")
 
     class Config:
-        # прочие опции Pydantic — не указываем env_file,
-        # чтобы в проде получали напрямую из os.environ
+        env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = True
 
 settings = Settings()
