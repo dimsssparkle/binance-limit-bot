@@ -95,16 +95,15 @@ def place_post_only_with_retries(
 ) -> dict:
     """
     Динамический retry без внешнего base_price.
-    Базовая цена = best_bid (для BUY) или best_ask (для SELL) из WebSocket.
+    Базовая цена = best_bid (для BUY) или best_ask (для SELL) из WebSocket/REST.
     """
-    # Забираем tickSize
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
-    # Определяем базовую цену
-    book = latest_book.get(symbol)
-    if not book:
-        raise RuntimeError(f"No market data for {symbol} yet")
+
+    # Получаем базовую цену
+    book = get_current_book(symbol)
     base_price = book["bid"] if side.upper() == "BUY" else book["ask"]
+
     # Границы отклонения
     max_dev_abs = base_price * max_deviation_pct / 100
     max_offset = max_dev_abs + tick
@@ -112,11 +111,9 @@ def place_post_only_with_retries(
     last_order_id = None
 
     while True:
-        # Рассчитываем цену с учётом offset
         price_raw = (base_price + offset) if side.upper() == "BUY" else (base_price - offset)
         price = float(f"{price_raw:.{abs(int(round(math.log10(tick))))}f}")
 
-        # Отменяем предыдущий
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
@@ -124,7 +121,6 @@ def place_post_only_with_retries(
             except Exception:
                 pass
 
-        # Создаём новый ордер
         order = _client.futures_create_order(
             symbol=symbol,
             side=side,
@@ -136,16 +132,29 @@ def place_post_only_with_retries(
         last_order_id = order["orderId"]
         logger.info(f"Placed order {last_order_id} at price {price}, offset={offset}")
 
-        # Ждём и проверяем
         time.sleep(retry_interval)
+
         o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
         status = o.get("status")
         logger.info(f"Order {last_order_id} status: {status}")
         if status in ("FILLED", "PARTIALLY_FILLED"):
             return order
 
-        # Увеличиваем offset и проверяем границу
         offset += tick
         if offset > max_offset:
             _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
             raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
+
+
+def get_position_amount(symbol: str) -> float:
+    """
+    Возвращает текущий размер позиции для symbol и логгирует его.
+    """
+    positions = _client.futures_position_information()
+    for p in positions:
+        if p['symbol'] == symbol:
+            amt = float(p.get('positionAmt', 0))
+            log_position(symbol, amt)
+            return amt
+    log_position(symbol, 0.0)
+    return 0.0
