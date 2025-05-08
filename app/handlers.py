@@ -1,7 +1,9 @@
 """
 app/handlers.py
 
-Бизнес-логика обработки сигналов с новым ретраем.
+Обработка сигналов без передачи цены:
+- `price` больше не поле модели.
+- Базовая цена берётся из WebSocket.
 """
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
@@ -11,14 +13,13 @@ from app.binance_client import (
     place_post_only_with_retries
 )
 
-# Убедимся, что папка и файлы инициализированы
+# Инициализируем папку и файлы
 init_data()
 
 class Signal(BaseModel):
     symbol: str
     side: str
     quantity: float
-    price: float  # цена из сигнала
     action: str = 'open'
 
     @validator('side')
@@ -42,22 +43,21 @@ def handle_signal(data: dict) -> dict:
         current_amt = get_position_amount(sig.symbol)
 
         if sig.action == 'close':
-            return {'status':'error','detail':'close via retries not implemented'}
+            return {'status': 'error', 'detail': 'Close not implemented'}
 
-        # action == 'open'
+        # Для открытия позиции применяем retry по стакану
         order = place_post_only_with_retries(
             symbol=sig.symbol,
             side=sig.side,
             quantity=sig.quantity,
-            base_price=sig.price,
             max_deviation_pct=0.1,
             retry_interval=1.0
         )
-        return {'status':'ok','detail':f"order_id={order['orderId']}"}
+        return {'status': 'ok', 'detail': f"order_id={order['orderId']}"}
 
     except BinanceAPIException as e:
-        return {'status':'error','detail':f"BinanceAPI: {e.message}"}
+        return {'status': 'error', 'detail': f"BinanceAPI: {e.message}"}
     except RuntimeError as e:
-        return {'status':'error','detail':str(e)}
+        return {'status': 'error', 'detail': str(e)}
     except ValueError as e:
-        return {'status':'error','detail':str(e)}
+        return {'status': 'error', 'detail': str(e)}

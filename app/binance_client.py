@@ -2,12 +2,10 @@
 app/binance_client.py
 
 Обёртка над Binance Futures API:
-- REST-запросы для позиций и ордеров.
-- WebSocket-интеграция через latest_book.
-- Динамический ретрай лимитных Post-Only ордеров.
-- История стакана и позиций в CSV.
+- Интеграция WebSocket для market data.
+- Динамический ретрай лимитных Post-Only ордеров с вычислением базовой цены из стакана.
+- Логика истории стакана и позиций.
 """
-import os
 import math
 import time
 import logging
@@ -21,20 +19,17 @@ from app.websocket_manager import latest_book
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.log_level)
 
-# Binance-клиент один раз
+# Инициализация Binance-клиента
 _client = Client(settings.binance_api_key, settings.binance_api_secret)
 
-# Пути к локальным CSV
+# Пути к CSV
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 ORDER_BOOK_HISTORY = DATA_DIR / "order_book_history.csv"
-POSITION_HISTORY = DATA_DIR / "position_history.csv"
+POSITION_HISTORY   = DATA_DIR / "position_history.csv"
 
 
 def init_data() -> None:
-    """
-    Создать папку ./data и CSV-файлы с заголовками, если их нет.
-    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not ORDER_BOOK_HISTORY.exists():
         ORDER_BOOK_HISTORY.write_text("timestamp,symbol,best_bid,best_ask\n")
@@ -58,18 +53,18 @@ def log_position(symbol: str, position_amt: float) -> None:
 
 def get_price_filter(symbol: str) -> dict:
     info = _client.futures_exchange_info()
-    for s in info['symbols']:
-        if s['symbol'] == symbol:
-            return next(f for f in s['filters'] if f['filterType'] == 'PRICE_FILTER')
+    for s in info["symbols"]:
+        if s["symbol"] == symbol:
+            return next(f for f in s["filters"] if f["filterType"] == "PRICE_FILTER")
     raise ValueError(f"No PRICE_FILTER for symbol {symbol}")
 
 
 def cancel_open_orders(symbol: str, side: str = None) -> None:
     opens = _client.futures_get_open_orders(symbol=symbol)
     for o in opens:
-        if o['type'] == 'LIMIT' and (side is None or o['side'] == side):
+        if o["type"] == "LIMIT" and (side is None or o["side"] == side):
             logger.info(f"Cancelling order {o['orderId']} side={o['side']}")
-            _client.futures_cancel_order(symbol=symbol, orderId=o['orderId'])
+            _client.futures_cancel_order(symbol=symbol, orderId=o["orderId"])
 
 
 def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interval: float = 0.5) -> None:
@@ -80,10 +75,10 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
     while time.time() < deadline:
         attempt += 1
         o = _client.futures_get_order(symbol=symbol, orderId=order_id)
-        status = o.get('status')
+        status = o.get("status")
         logger.info(f"Order {order_id} status #{attempt}: {status}")
         last_status = status
-        if status in ('FILLED', 'PARTIALLY_FILLED'):
+        if status in ("FILLED", "PARTIALLY_FILLED"):
             logger.info(f"Order {order_id} filled at attempt {attempt}")
             return
         time.sleep(poll_interval)
@@ -91,89 +86,66 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
     raise RuntimeError(f"Order {order_id} not filled within {timeout}s")
 
 
-def place_post_only(symbol: str, side: str, quantity: float) -> dict:
-    # традиционный без retry
-    cancel_open_orders(symbol, side)
-    # используем WebSocket стакан
-    book = latest_book.get(symbol)
-    if not book:
-        raise RuntimeError(f"No market data for {symbol} yet")
-    pf = get_price_filter(symbol)
-    tick = float(pf['tickSize'])
-    price = (book['bid'] - tick) if side.upper() == 'BUY' else (book['ask'] + tick)
-    price = float(f"{price:.{abs(int(round(math.log10(tick))))}f}")
-    order = _client.futures_create_order(
-        symbol=symbol, side=side, type='LIMIT', timeInForce='GTX', price=str(price), quantity=str(quantity)
-    )
-    wait_for_fill(symbol, order['orderId'])
-    return order
-
-
-def place_post_only_exit(symbol: str, side: str, quantity: float) -> dict:
-    close_side = 'SELL' if side.upper() == 'BUY' else 'BUY'
-    cancel_open_orders(symbol, close_side)
-    book = latest_book.get(symbol)
-    if not book:
-        raise RuntimeError(f"No market data for {symbol} yet")
-    pf = get_price_filter(symbol)
-    tick = float(pf['tickSize'])
-    price = (book['ask'] + tick) if close_side == 'SELL' else (book['bid'] - tick)
-    price = float(f"{price:.{abs(int(round(math.log10(tick))))}f}")
-    order = _client.futures_create_order(
-        symbol=symbol, side=close_side, type='LIMIT', timeInForce='GTX', price=str(price), quantity=str(quantity)
-    )
-    wait_for_fill(symbol, order['orderId'])
-    return order
-
-
 def place_post_only_with_retries(
-    symbol: str, side: str, quantity: float,
-    base_price: float, max_deviation_pct: float = 0.1,
+    symbol: str,
+    side: str,
+    quantity: float,
+    max_deviation_pct: float = 0.1,
     retry_interval: float = 1.0
 ) -> dict:
+    """
+    Динамический retry без внешнего base_price.
+    Базовая цена = best_bid (для BUY) или best_ask (для SELL) из WebSocket.
+    """
+    # Забираем tickSize
     pf = get_price_filter(symbol)
-    tick = float(pf['tickSize'])
+    tick = float(pf["tickSize"])
+    # Определяем базовую цену
+    book = latest_book.get(symbol)
+    if not book:
+        raise RuntimeError(f"No market data for {symbol} yet")
+    base_price = book["bid"] if side.upper() == "BUY" else book["ask"]
+    # Границы отклонения
     max_dev_abs = base_price * max_deviation_pct / 100
     max_offset = max_dev_abs + tick
     offset = 0.0
     last_order_id = None
+
     while True:
-        book = latest_book.get(symbol)
-        if not book:
-            raise RuntimeError(f"No market data for {symbol} yet")
-        price_raw = (book['bid'] + offset) if side.upper() == 'BUY' else (book['ask'] - offset)
+        # Рассчитываем цену с учётом offset
+        price_raw = (base_price + offset) if side.upper() == "BUY" else (base_price - offset)
         price = float(f"{price_raw:.{abs(int(round(math.log10(tick))))}f}")
+
+        # Отменяем предыдущий
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
                 logger.info(f"Cancelled previous order {last_order_id}")
             except Exception:
                 pass
+
+        # Создаём новый ордер
         order = _client.futures_create_order(
-            symbol=symbol, side=side, type='LIMIT', timeInForce='GTX', price=str(price), quantity=str(quantity)
+            symbol=symbol,
+            side=side,
+            type="LIMIT",
+            timeInForce="GTX",
+            price=str(price),
+            quantity=str(quantity)
         )
-        last_order_id = order['orderId']
+        last_order_id = order["orderId"]
         logger.info(f"Placed order {last_order_id} at price {price}, offset={offset}")
+
+        # Ждём и проверяем
         time.sleep(retry_interval)
         o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
-        status = o.get('status')
+        status = o.get("status")
         logger.info(f"Order {last_order_id} status: {status}")
-        if status in ('FILLED', 'PARTIALLY_FILLED'):
+        if status in ("FILLED", "PARTIALLY_FILLED"):
             return order
+
+        # Увеличиваем offset и проверяем границу
         offset += tick
         if offset > max_offset:
             _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
-            raise RuntimeError(
-                f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries"
-            )
-
-
-def get_position_amount(symbol: str) -> float:
-    positions = _client.futures_position_information()
-    for p in positions:
-        if p['symbol'] == symbol:
-            amt = float(p.get('positionAmt', 0))
-            log_position(symbol, amt)
-            return amt
-    log_position(symbol, 0.0)
-    return 0.0
+            raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
