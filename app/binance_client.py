@@ -86,6 +86,21 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
     raise RuntimeError(f"Order {order_id} not filled within {timeout}s")
 
 
+def get_current_book(symbol: str) -> dict[str, float]:
+    """
+    Возвращает {'bid': float, 'ask': float}.
+    Сначала пытается из WebSocket latest_book; если нет — REST.
+    """
+    book = latest_book.get(symbol)
+    if book:
+        return book
+    # REST-fallback
+    resp = _client.futures_order_book(symbol=symbol, limit=5)
+    bid = float(resp["bids"][0][0])
+    ask = float(resp["asks"][0][0])
+    return {"bid": bid, "ask": ask}
+
+
 def place_post_only_with_retries(
     symbol: str,
     side: str,
