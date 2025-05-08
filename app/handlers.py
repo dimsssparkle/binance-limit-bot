@@ -2,12 +2,16 @@
 app/handlers.py
 
 Обработка сигналов без передачи цены:
-- `price` больше не поле модели.
-- Базовая цена берётся из WebSocket.
+- Базовая цена берётся из WebSocket/REST.
+- Поддержка открытия и закрытия позиций через retry-функцию.
 """
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
-from app.binance_client import init_data, place_post_only_with_retries
+from app.binance_client import (
+    init_data,
+    get_position_amount,
+    place_post_only_with_retries
+)
 
 # Инициализируем папку и файлы
 init_data()
@@ -32,14 +36,30 @@ class Signal(BaseModel):
             raise ValueError("Поле 'action' должно быть 'open' или 'close'")
         return v2
 
+
 def handle_signal(data: dict) -> dict:
     try:
         sig = Signal(**data)
 
         if sig.action == 'close':
-            return {'status': 'error', 'detail': 'Close not implemented'}
+            # Получаем текущую позицию
+            current_amt = get_position_amount(sig.symbol)
+            if current_amt == 0:
+                return {'status': 'error', 'detail': 'Нет позиции для закрытия'}
+            # Определяем сторону закрытия
+            close_side = 'SELL' if current_amt > 0 else 'BUY'
+            qty = abs(current_amt)
+            # Выставляем ордер на закрытие
+            order = place_post_only_with_retries(
+                symbol=sig.symbol,
+                side=close_side,
+                quantity=qty,
+                max_deviation_pct=0.1,
+                retry_interval=1.0
+            )
+            return {'status': 'ok', 'detail': f"closed_order_id={order['orderId']}"}
 
-        # Для открытия позиции применяем retry по стакану
+        # Открытие позиции
         order = place_post_only_with_retries(
             symbol=sig.symbol,
             side=sig.side,

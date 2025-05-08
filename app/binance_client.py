@@ -1,10 +1,10 @@
 """
 app/binance_client.py
 
-Обёртка над Binance Futures API с REST-fallback’ом стакана:
-- get_current_book: REST-fallback при пустом WebSocket.
-- retry-логика Post-Only ордеров как прежде.
-- init_data, логирование истории стакана и позиций.
+Обёртка над Binance Futures API:
+- Интеграция WebSocket для market data.
+- Динамический ретрай лимитных Post-Only ордеров с вычислением базовой цены из стакана.
+- Логика истории стакана и позиций.
 """
 import math
 import time
@@ -28,6 +28,7 @@ DATA_DIR = BASE_DIR / "data"
 ORDER_BOOK_HISTORY = DATA_DIR / "order_book_history.csv"
 POSITION_HISTORY   = DATA_DIR / "position_history.csv"
 
+
 def init_data() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not ORDER_BOOK_HISTORY.exists():
@@ -37,15 +38,18 @@ def init_data() -> None:
         POSITION_HISTORY.write_text("timestamp,symbol,positionAmt\n")
         logger.info(f"Created {POSITION_HISTORY}")
 
+
 def log_order_book(symbol: str, best_bid: float, best_ask: float) -> None:
     ts = datetime.utcnow().isoformat()
     with ORDER_BOOK_HISTORY.open("a") as f:
         f.write(f"{ts},{symbol},{best_bid},{best_ask}\n")
 
+
 def log_position(symbol: str, position_amt: float) -> None:
     ts = datetime.utcnow().isoformat()
     with POSITION_HISTORY.open("a") as f:
         f.write(f"{ts},{symbol},{position_amt}\n")
+
 
 def get_price_filter(symbol: str) -> dict:
     info = _client.futures_exchange_info()
@@ -54,12 +58,14 @@ def get_price_filter(symbol: str) -> dict:
             return next(f for f in s["filters"] if f["filterType"] == "PRICE_FILTER")
     raise ValueError(f"No PRICE_FILTER for symbol {symbol}")
 
+
 def cancel_open_orders(symbol: str, side: str = None) -> None:
     opens = _client.futures_get_open_orders(symbol=symbol)
     for o in opens:
         if o["type"] == "LIMIT" and (side is None or o["side"] == side):
             logger.info(f"Cancelling order {o['orderId']} side={o['side']}")
             _client.futures_cancel_order(symbol=symbol, orderId=o["orderId"])
+
 
 def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interval: float = 0.5) -> None:
     deadline = time.time() + timeout
@@ -79,19 +85,6 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
     logger.error(f"Order {order_id} not filled within {timeout}s, last status {last_status}")
     raise RuntimeError(f"Order {order_id} not filled within {timeout}s")
 
-def get_current_book(symbol: str) -> dict[str, float]:
-    """
-    Возвращает {'bid': float, 'ask': float}.
-    Сначала пытается из WebSocket latest_book; если нет — REST.
-    """
-    book = latest_book.get(symbol)
-    if book:
-        return book
-    # REST-fallback
-    resp = _client.futures_order_book(symbol=symbol, limit=5)
-    bid = float(resp["bids"][0][0])
-    ask = float(resp["asks"][0][0])
-    return {"bid": bid, "ask": ask}
 
 def place_post_only_with_retries(
     symbol: str,
@@ -102,15 +95,16 @@ def place_post_only_with_retries(
 ) -> dict:
     """
     Динамический retry без внешнего base_price.
-    Базовая цена = best_bid (для BUY) или best_ask (для SELL) из get_current_book.
+    Базовая цена = best_bid (для BUY) или best_ask (для SELL) из WebSocket.
     """
+    # Забираем tickSize
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
-
-    # Получаем базовую цену
-    book = get_current_book(symbol)
+    # Определяем базовую цену
+    book = latest_book.get(symbol)
+    if not book:
+        raise RuntimeError(f"No market data for {symbol} yet")
     base_price = book["bid"] if side.upper() == "BUY" else book["ask"]
-
     # Границы отклонения
     max_dev_abs = base_price * max_deviation_pct / 100
     max_offset = max_dev_abs + tick
@@ -118,9 +112,11 @@ def place_post_only_with_retries(
     last_order_id = None
 
     while True:
+        # Рассчитываем цену с учётом offset
         price_raw = (base_price + offset) if side.upper() == "BUY" else (base_price - offset)
         price = float(f"{price_raw:.{abs(int(round(math.log10(tick))))}f}")
 
+        # Отменяем предыдущий
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
@@ -128,6 +124,7 @@ def place_post_only_with_retries(
             except Exception:
                 pass
 
+        # Создаём новый ордер
         order = _client.futures_create_order(
             symbol=symbol,
             side=side,
@@ -139,14 +136,15 @@ def place_post_only_with_retries(
         last_order_id = order["orderId"]
         logger.info(f"Placed order {last_order_id} at price {price}, offset={offset}")
 
+        # Ждём и проверяем
         time.sleep(retry_interval)
-
         o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
         status = o.get("status")
         logger.info(f"Order {last_order_id} status: {status}")
         if status in ("FILLED", "PARTIALLY_FILLED"):
             return order
 
+        # Увеличиваем offset и проверяем границу
         offset += tick
         if offset > max_offset:
             _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
