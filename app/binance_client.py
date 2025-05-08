@@ -178,6 +178,8 @@ def place_post_only_with_retries(
             raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
 
 
+
+
 def get_position_amount(symbol: str) -> float:
     """
     Возвращает текущий размер позиции для symbol и логгирует его.
