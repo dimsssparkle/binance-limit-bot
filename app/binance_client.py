@@ -129,8 +129,16 @@ def place_post_only_with_retries(
         price_raw = (base_price + offset) if side.upper() == "BUY" else (base_price - offset)
         price = float(f"{price_raw:.{abs(int(round(math.log10(tick))))}f}")
 
+        # Отменяем предыдущий ордер, если был
         if last_order_id:
             try:
+                _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
+                logger.info(f"Cancelled previous order {last_order_id}")
+            except Exception:
+                pass
+
+        # Пытаемся создать новый ордер
+        try:
             order = _client.futures_create_order(
                 symbol=symbol,
                 side=side,
@@ -149,24 +157,28 @@ def place_post_only_with_retries(
                 continue
             # В остальных случаях пробрасываем ошибку
             raise
+
         last_order_id = order["orderId"]
         logger.info(f"Placed order {last_order_id} at price {price}, offset={offset}")
 
+        # Ждем небольшой промежуток перед проверкой
         time.sleep(retry_interval)
 
+        # Проверяем статус
         o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
         status = o.get("status")
         logger.info(f"Order {last_order_id} status: {status}")
         if status in ("FILLED", "PARTIALLY_FILLED"):
             return order
 
+        # Увеличиваем смещение и повторяем
         offset += tick
         if offset > max_offset:
             _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
             raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
 
 
-def get_position_amount(symbol: str) -> float:
+def get_position_amount(symbol: str) -> float:(symbol: str) -> float:
     """
     Возвращает текущий размер позиции для symbol и логгирует его.
     """
