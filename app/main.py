@@ -6,30 +6,36 @@ from pathlib import Path
 from app.config import settings
 from app.handlers import handle_signal
 from app.binance_client import init_data
+from app.websocket_manager import start_websocket
 
-# 1) Настраиваем логирование до всего, чтобы ловить сообщения init_data()
+# 1) Инициализация папки и файлов для логов
+init_data()
+
+# 2) Запуск WebSocket для нужных пар
+# Замените ['ETHUSDT'] на список ваших symbol
+start_websocket(['ETHUSDT'])
+
+# 3) Настройка логирования
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# 2) Инициализация папки data и CSV-файлов
-init_data()
-logger.info(f"Data directory initialized at: {Path(__file__).resolve().parent.parent / 'data'}")
+# 4) Логирование места хранения data
+DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
+logger.info(f"Data directory initialized at: {DATA_DIR}")
 
-# 3) Создаем Flask-приложение
+# 5) Создание Flask-приложения
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    logger.info("Received webhook")
-    # Проверяем секрет в query
+    logger.info("Received webhook request")
     secret_qs = request.args.get("secret", "")
     if secret_qs != settings.webhook_secret:
         abort(401, "Invalid webhook secret (query)")
 
-    # Проверяем секрет в теле
     data = request.get_json(force=True)
     if data.get("secret") != settings.webhook_secret:
         abort(401, "Invalid webhook secret (body)")
@@ -40,8 +46,16 @@ def webhook():
     logger.info(f"Response: {result}")
     return jsonify(result), status_code
 
+@app.route("/debug/files", methods=["GET"])
+def debug_files():
+    try:
+        files = [p.name for p in DATA_DIR.iterdir()]
+        return jsonify({"data_dir": str(DATA_DIR), "files": files}), 200
+    except Exception as e:
+        logger.error(f"Error reading data dir: {e}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
-    # Для локального запуска: покажем текущую директорию
     cwd = Path().resolve()
     logger.info(f"Starting locally, CWD: {cwd}")
     app.run(host=settings.host, port=settings.port)
