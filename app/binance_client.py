@@ -131,19 +131,24 @@ def place_post_only_with_retries(
 
         if last_order_id:
             try:
-                _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
-                logger.info(f"Cancelled previous order {last_order_id}")
-            except Exception:
-                pass
-
-        order = _client.futures_create_order(
-            symbol=symbol,
-            side=side,
-            type="LIMIT",
-            timeInForce="GTX",
-            price=str(price),
-            quantity=str(quantity)
-        )
+            order = _client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type="LIMIT",
+                timeInForce="GTX",
+                price=str(price),
+                quantity=str(quantity)
+            )
+        except BinanceAPIException as e:
+            # Если заявка отклонена как taker, продолжаем ретрай с увеличенным offset
+            if "Post Only order will be rejected" in e.message:
+                logger.info(f"Post-Only rejected at price {price}: retrying")
+                offset += tick
+                if offset > max_offset:
+                    raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
+                continue
+            # В остальных случаях пробрасываем ошибку
+            raise
         last_order_id = order["orderId"]
         logger.info(f"Placed order {last_order_id} at price {price}, offset={offset}")
 
