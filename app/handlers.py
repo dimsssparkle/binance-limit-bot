@@ -7,11 +7,7 @@ app/handlers.py
 """
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
-from app.binance_client import (
-    init_data,
-    get_position_amount,
-    place_post_only_with_retries
-)
+from app.binance_client import init_data, place_post_only_with_retries
 
 # Инициализируем папку и файлы
 init_data()
@@ -36,11 +32,9 @@ class Signal(BaseModel):
             raise ValueError("Поле 'action' должно быть 'open' или 'close'")
         return v2
 
-
 def handle_signal(data: dict) -> dict:
     try:
         sig = Signal(**data)
-        current_amt = get_position_amount(sig.symbol)
 
         if sig.action == 'close':
             return {'status': 'error', 'detail': 'Close not implemented'}
