@@ -1,7 +1,7 @@
 """
 app/websocket_manager.py
 
-WebSocket-менеджер для получения глубины стакана в реальном времени.
+WebSocket-менеджер для Binance Futures depth stream.
 Хранит в памяти latest_book с лучшими bid/ask для каждой symbol.
 """
 from threading import Thread
@@ -21,9 +21,9 @@ _twm = ThreadedWebsocketManager(
     api_secret=settings.binance_api_secret
 )
 
-
 def _on_depth_update(msg):
-    symbol = msg['s']  # e.g. 'ETHUSDT'
+    # msg для фьючерсного потока приходит с теми же ключами
+    symbol = msg['s']  # например 'ETHUSDT'
     bids = msg.get('b', [])
     asks = msg.get('a', [])
     if bids and asks:
@@ -31,17 +31,17 @@ def _on_depth_update(msg):
             'bid': float(bids[0][0]),
             'ask': float(asks[0][0])
         }
-
+        logger.debug(f"Depth update {symbol}: bid={latest_book[symbol]['bid']}, ask={latest_book[symbol]['ask']}")
 
 def start_websocket(symbols: list[str]) -> None:
     """
-    Запускает WebSocket-поток и подписывается на depth для каждого symbol.
+    Запускает WebSocket-поток и подписывается на futures_depth для каждого symbol.
     """
     def runner():
         _twm.start()
         for s in symbols:
-            logger.info(f"Subscribing to depth socket for {s}")
-            _twm.start_depth_socket(callback=_on_depth_update, symbol=s)
+            logger.info(f"Subscribing to futures depth socket for {s}")
+            _twm.start_futures_depth_socket(callback=_on_depth_update, symbol=s)
         _twm.join()
 
     thread = Thread(target=runner, daemon=True)
