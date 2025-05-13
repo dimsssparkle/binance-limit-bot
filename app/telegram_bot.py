@@ -1,57 +1,49 @@
 import logging
-from telegram import Update, Bot
-from telegram.ext import Updater, CommandHandler, CallbackContext
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from app.config import settings
-from app.binance_client import (
-    get_position_amount, cancel_open_orders, place_post_only_with_retries
-)
+from app.binance_client import get_position_amount, cancel_open_orders, place_post_only_with_retries
 from app.handlers import handle_signal
 from threading import Lock
 
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.log_level)
 
-# Telegram Bot Initialization
-bot = Bot(token=settings.telegram_token)
-updater = Updater(settings.telegram_token)
-dispatcher = updater.dispatcher
-
 # Control for webhooks processing
 webhook_lock = Lock()
 webhook_paused = False
 
 # /close_trades - close all open positions
-def close_trades(update: Update, context: CallbackContext):
-    symbols = settings.symbols
+async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = []
-    for sym in symbols:
+    for sym in settings.symbols:
         amt = get_position_amount(sym)
         if amt:
             side = 'SELL' if amt > 0 else 'BUY'
             order = place_post_only_with_retries(sym, side, abs(amt))
             results.append(f"{sym}: closed_order_id={order.get('orderId')}")
     text = "\n".join(results) if results else "No positions to close."
-    update.message.reply_text(text)
+    await update.message.reply_text(text)
 
 # /close_orders - cancel all open orders
-def close_orders(update: Update, context: CallbackContext):
+async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for sym in settings.symbols:
-        from app.binance_client import cancel_open_orders as _cancel
-        _cancel(sym)
-    update.message.reply_text("All open orders cancelled.")
+        cancel_open_orders(sym)
+    await update.message.reply_text("All open orders cancelled.")
 
 # /balance - futures account balance
-def balance(update: Update, context: CallbackContext):
-    client = Bot(token=settings.telegram_token)
-    account = client.get_futures_account()  # implement via binance client if needed
-    balances = {item['asset']: item['balance'] for item in account.get('assets', [])}
-    text = "\n".join(f"{asset}: {balance}" for asset, balance in balances.items())
-    update.message.reply_text(text or "No balance data.")
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # TODO: replace with actual binance client call
+    from app.binance_client import _client
+    account = _client.futures_account_balance()
+    lines = [f"{a['asset']}: {a['balance']}" for a in account]
+    text = "\n".join(lines) if lines else "No balance data."
+    await update.message.reply_text(text)
 
 # /active_trade - detailed open positions
-def active_trade(update: Update, context: CallbackContext):
-    client = Bot(token=settings.telegram_token)
-    positions = client.get_futures_account()['positions']  # or use binance client futures_position_information
+async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from app.binance_client import _client
+    positions = _client.futures_position_information()
     messages = []
     for p in positions:
         amt = float(p.get('positionAmt', 0))
@@ -80,38 +72,39 @@ def active_trade(update: Update, context: CallbackContext):
         )
         messages.append(msg)
     reply = "\n---\n".join(messages) if messages else 'No active positions.'
-    update.message.reply_text(reply)
+    await update.message.reply_text(reply)
 
 # /resume - resume webhook handling
-def resume(update: Update, context: CallbackContext):
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = False
-    update.message.reply_text("Webhooks resumed.")
+    await update.message.reply_text("Webhooks resumed.")
 
 # /pause - pause webhook handling
-def pause(update: Update, context: CallbackContext):
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = True
-    update.message.reply_text("Webhooks paused.")
+    await update.message.reply_text("Webhooks paused.")
 
 # /create_order - create default order
-def create_order(update: Update, context: CallbackContext):
+async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sym = settings.default_symbol
     qty = settings.default_quantity
-    side = context.args[0].upper() if context.args else 'BUY'
+    args = context.args
+    side = args[0].upper() if args else 'BUY'
     order = place_post_only_with_retries(sym, side, qty)
-    update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty}")
+    await update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty}")
 
-# Register handlers
-dispatcher.add_handler(CommandHandler('close_trades', close_trades))
-dispatcher.add_handler(CommandHandler('close_orders', close_orders))
-dispatcher.add_handler(CommandHandler('balance', balance))
-dispatcher.add_handler(CommandHandler('active_trade', active_trade))
-dispatcher.add_handler(CommandHandler('resume', resume))
-dispatcher.add_handler(CommandHandler('pause', pause))
-dispatcher.add_handler(CommandHandler('create_order', create_order))
+# Build and run the bot
+app = ApplicationBuilder().token(settings.telegram_token).build()
+app.add_handler(CommandHandler('close_trades', close_trades))
+app.add_handler(CommandHandler('close_orders', close_orders))
+app.add_handler(CommandHandler('balance', balance))
+app.add_handler(CommandHandler('active_trade', active_trade))
+app.add_handler(CommandHandler('resume', resume))
+app.add_handler(CommandHandler('pause', pause))
+app.add_handler(CommandHandler('create_order', create_order))
 
 if __name__ == '__main__':
-    updater.start_polling()
-    logger.info("Telegram bot started")
-    updater.idle()
+    logger.info("Starting Telegram bot...")
+    app.run_polling()
