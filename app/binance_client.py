@@ -95,7 +95,7 @@ def place_post_only_with_retries(
     side: str,
     quantity: float,
     max_deviation_pct: float = 0.1,
-    retry_interval: float = 1.0,
+    retry_interval: float = 0.33,  # уменьшенный интервал для более частых попыток
     max_attempts: int = 20
 ) -> dict:
     """
