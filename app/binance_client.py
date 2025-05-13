@@ -99,11 +99,11 @@ def place_post_only_with_retries(
     max_attempts: int = 20
 ) -> dict:
     """
-    Выставляет один post-only лимитный ордер и держит его в начале стакана:
-      - Цена = best_bid + tick для BUY;
-      - Цена = best_ask - tick для SELL.
-    После создания ордера ждёт его заполнения, при отмене/drop повторно размещает по свежей цене.
-    Ограничение по max_deviation_pct и max_attempts.
+    Выставляет post-only лимитный ордер и продолжает попытки размещения при любых отказах,
+    пока не заполнится, либо не исчерпает max_attempts, либо не превысит допустимое отклонение:
+      - Для BUY: price_raw = best_bid - tick * attempt;
+      - Для SELL: price_raw = best_ask + tick * attempt;
+    После каждой неудачной попытки (API exception с reject или статус NEW без fill) повторяет.
     """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
@@ -112,25 +112,32 @@ def place_post_only_with_retries(
     for attempt in range(1, max_attempts + 1):
         book = get_current_book(symbol)
         best_bid, best_ask = book["bid"], book["ask"]
-        price_raw = (best_bid - tick * attempt) if side.upper() == "BUY" else (best_ask + tick * attempt)
-        base_price = best_bid if side.upper() == "BUY" else best_ask
+        # Расчет цены с учетом итерации
+        if side.upper() == "BUY":
+            price_raw = best_bid - tick * attempt
+            base_price = best_bid
+        else:
+            price_raw = best_ask + tick * attempt
+            base_price = best_ask
+        # Проверяем отклонение
         max_dev = base_price * max_deviation_pct / 100
         if abs(price_raw - base_price) > max_dev:
+            logger.error(f"Exceeded max deviation after {attempt} attempts")
             break
         precision = abs(int(round(math.log10(tick))))
         price_str = f"{price_raw:.{precision}f}"
 
-        # Если предыдущий ордер отменён или НЕ существует — размещаем новый
+        # Отменяем предыдущий ордер, если есть
         if last_order_id:
-            # Проверяем существует ли он в книге
             try:
-                o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
-                if o.get("status") not in ("NEW", "PARTIALLY_FILLED"):
-                    last_order_id = None
+                _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
+                logger.info(f"Cancelled previous order {last_order_id}")
             except Exception:
-                last_order_id = None
+                pass
+            last_order_id = None
 
-        if not last_order_id:
+        # Пытаемся создать ордер
+        try:
             order = _client.futures_create_order(
                 symbol=symbol,
                 side=side.upper(),
@@ -140,24 +147,34 @@ def place_post_only_with_retries(
                 quantity=str(quantity)
             )
             last_order_id = order["orderId"]
-            logger.info(f"Placed post-only {side} at top of book: {price_str}")
+            logger.info(f"Attempt {attempt}/{max_attempts}: placed post-only {side} at {price_str}")
+        except BinanceAPIException as e:
+            # При отказе как maker продолжаем попытки
+            if "could not be executed as maker" in e.message or "Post Only order will be rejected" in e.message:
+                logger.warning(f"Attempt {attempt}: maker reject ({e.message}), retrying")
+                time.sleep(retry_interval)
+                continue
+            # Любые другие ошибки прерывают цикл
+            logger.error(f"Attempt {attempt}: unexpected API error ({e.message})")
+            raise
 
-        # Ждём перед проверкой
+        # Ждем перед проверкой статуса
         time.sleep(retry_interval)
-
-        # Проверяем статус
         try:
             o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
             status = o.get("status")
-        except BinanceAPIException:
-            last_order_id = None
+        except BinanceAPIException as e:
+            logger.warning(f"Attempt {attempt}: cannot fetch order status, retrying")
+            time.sleep(retry_interval)
             continue
 
         logger.info(f"Order {last_order_id} status: {status}")
         if status in ("FILLED", "PARTIALLY_FILLED"):
             return o
+        # Иначе — повторяем попытку
+        time.sleep(retry_interval)
 
-    error = f"Order {side} {symbol} {quantity} not filled after {max_attempts} storms"
+    error = f"Order {side} {symbol} {quantity} not filled after {max_attempts} attempts"
     logger.error(error)
     raise RuntimeError(error)
 
