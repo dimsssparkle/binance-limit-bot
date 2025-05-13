@@ -87,16 +87,6 @@ def active_trade(update: Update, context: CallbackContext):
         messages.append(msg)
     reply = '---'.join(messages) if messages else 'No active positions.'
     update.message.reply_text(reply)
-:
-    """Получить текущие открытые позиции"""
-    symbols = settings.symbols
-    results = []
-    for sym in symbols:
-        amt = get_position_amount(sym)
-        if amt != 0:
-            results.append(f"{sym}: {amt}")
-    update.message.reply_text("\n".join(results) if results else "No active positions.")
-
 # Command: /resume
 def resume(update: Update, context: CallbackContext):
     """Возобновить обработку вебхуков"""
@@ -133,3 +123,4 @@ if __name__ == '__main__':
     updater.start_polling()
     logger.info("Telegram bot started")
     updater.idle()
+
