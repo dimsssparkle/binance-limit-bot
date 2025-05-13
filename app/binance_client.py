@@ -65,6 +65,12 @@ def get_price_filter(symbol: str) -> dict:
             return next(f for f in s["filters"] if f["filterType"] == "PRICE_FILTER")
     raise ValueError(f"No PRICE_FILTER for symbol {symbol}")
 
+def cancel_open_orders(symbol: str, side: str = None) -> None:
+    opens = _client.futures_get_open_orders(symbol=symbol)
+    for o in opens:
+        if o["type"] == "LIMIT" and (side is None or o["side"] == side):
+            logger.info(f"Cancelling order {o['orderId']} side={o['side']}")
+            _client.futures_cancel_order(symbol=symbol, orderId=o["orderId"])
 
 def get_current_book(symbol: str) -> dict:
     """Возвращает лучшие bid/ask из WebSocket или REST."""
