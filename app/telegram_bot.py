@@ -13,7 +13,7 @@ logger.setLevel(settings.log_level)
 
 # Telegram Bot Initialization
 bot = Bot(token=settings.telegram_token)
-updater = Updater(bot=bot, use_context=True)
+updater = Updater(settings.telegram_token)
 dispatcher = updater.dispatcher
 
 # Control for webhooks processing
