@@ -99,10 +99,11 @@ def place_post_only_with_retries(
     max_attempts: int = 20
 ) -> dict:
     """
-    Выставляет только post-only лимитный ордер с динамическим смещением:
-      - Для BUY: каждый раз берётся актуальный best_bid + tick;
-      - Для SELL: каждый раз берётся актуальный best_ask - tick;
-    Ограничение отклонения в процентах и попыток.
+    Выставляет один post-only лимитный ордер и держит его в начале стакана:
+      - Цена = best_bid + tick для BUY;
+      - Цена = best_ask - tick для SELL.
+    После создания ордера ждёт его заполнения, при отмене/drop повторно размещает по свежей цене.
+    Ограничение по max_deviation_pct и max_attempts.
     """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
@@ -111,31 +112,25 @@ def place_post_only_with_retries(
     for attempt in range(1, max_attempts + 1):
         book = get_current_book(symbol)
         best_bid, best_ask = book["bid"], book["ask"]
-        # Вычисляем цену близко к топу стакана
-        if side.upper() == "BUY":
-            price_raw = best_bid + tick
-            base_price = best_bid
-        else:
-            price_raw = best_ask - tick
-            base_price = best_ask
-
+        price_raw = best_bid + tick if side.upper() == "BUY" else best_ask - tick
+        base_price = best_bid if side.upper() == "BUY" else best_ask
         max_dev = base_price * max_deviation_pct / 100
-        # Если вышли за пределы отклонения — прекращаем
         if abs(price_raw - base_price) > max_dev:
             break
-
         precision = abs(int(round(math.log10(tick))))
         price_str = f"{price_raw:.{precision}f}"
 
-        # Отменяем предыдущий ордер
+        # Если предыдущий ордер отменён или НЕ существует — размещаем новый
         if last_order_id:
+            # Проверяем существует ли он в книге
             try:
-                _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
-                logger.info(f"Cancelled previous order {last_order_id}")
+                o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
+                if o.get("status") not in ("NEW", "PARTIALLY_FILLED"):
+                    last_order_id = None
             except Exception:
-                pass
+                last_order_id = None
 
-        try:
+        if not last_order_id:
             order = _client.futures_create_order(
                 symbol=symbol,
                 side=side.upper(),
@@ -144,25 +139,25 @@ def place_post_only_with_retries(
                 price=price_str,
                 quantity=str(quantity)
             )
-            order_id = order["orderId"]
-            logger.info(f"Attempt {attempt}/{max_attempts}: placed post-only {side} at {price_str}")
-        except BinanceAPIException as e:
-            if "Post Only order will be rejected" in e.message:
-                logger.debug(f"Post-Only rejected at {price_str}, retrying")
-                time.sleep(retry_interval)
-                continue
-            raise
+            last_order_id = order["orderId"]
+            logger.info(f"Placed post-only {side} at top of book: {price_str}")
 
-        last_order_id = order_id
+        # Ждём перед проверкой
         time.sleep(retry_interval)
 
-        o = _client.futures_get_order(symbol=symbol, orderId=order_id)
-        status = o.get("status")
-        logger.info(f"Order {order_id} status: {status}")
-        if status in ("FILLED", "PARTIALLY_FILLED"):
-            return order
+        # Проверяем статус
+        try:
+            o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
+            status = o.get("status")
+        except BinanceAPIException:
+            last_order_id = None
+            continue
 
-    error = f"Order {side} {symbol} {quantity} not filled after {max_attempts} attempts or deviation exceeded"
+        logger.info(f"Order {last_order_id} status: {status}")
+        if status in ("FILLED", "PARTIALLY_FILLED"):
+            return o
+
+    error = f"Order {side} {symbol} {quantity} not filled after {max_attempts} storms"
     logger.error(error)
     raise RuntimeError(error)
 
