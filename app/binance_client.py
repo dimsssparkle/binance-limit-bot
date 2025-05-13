@@ -166,7 +166,7 @@ def place_post_only_with_retries(
     logger.error(error)
     raise RuntimeError(error)
 
-def get_position_amount(symbol: str) -> float:(symbol: str) -> float:
+def get_position_amount(symbol: str) -> float:
     """Возвращает текущий размер позиции и логирует его."""
     positions = _client.futures_position_information()
     for p in positions:
