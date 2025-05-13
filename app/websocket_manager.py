@@ -12,18 +12,15 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.log_level)
 
-# В памяти: symbol -> {'bid': float, 'ask': float}
 latest_book: dict[str, dict[str, float]] = {}
 
-# Инициализируем WebSocket Manager
 _twm = ThreadedWebsocketManager(
     api_key=settings.binance_api_key,
     api_secret=settings.binance_api_secret
 )
 
 def _on_depth_update(msg):
-    # msg для фьючерсного потока приходит с теми же ключами
-    symbol = msg['s']  # например 'ETHUSDT'
+    symbol = msg['s']
     bids = msg.get('b', [])
     asks = msg.get('a', [])
     if bids and asks:
@@ -34,9 +31,6 @@ def _on_depth_update(msg):
         logger.debug(f"Depth update {symbol}: bid={latest_book[symbol]['bid']}, ask={latest_book[symbol]['ask']}")
 
 def start_websocket(symbols: list[str]) -> None:
-    """
-    Запускает WebSocket-поток и подписывается на futures_depth для каждого symbol.
-    """
     def runner():
         _twm.start()
         for s in symbols:

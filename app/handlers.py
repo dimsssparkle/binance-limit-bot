@@ -13,7 +13,6 @@ from app.binance_client import (
     place_post_only_with_retries
 )
 
-# Инициализируем папку и файлы
 init_data()
 
 class Signal(BaseModel):
@@ -40,16 +39,12 @@ class Signal(BaseModel):
 def handle_signal(data: dict) -> dict:
     try:
         sig = Signal(**data)
-
         if sig.action == 'close':
-            # Получаем текущую позицию
             current_amt = get_position_amount(sig.symbol)
             if current_amt == 0:
                 return {'status': 'error', 'detail': 'Нет позиции для закрытия'}
-            # Определяем сторону закрытия
             close_side = 'SELL' if current_amt > 0 else 'BUY'
             qty = abs(current_amt)
-            # Выставляем ордер на закрытие
             order = place_post_only_with_retries(
                 symbol=sig.symbol,
                 side=close_side,
@@ -58,8 +53,6 @@ def handle_signal(data: dict) -> dict:
                 retry_interval=1.0
             )
             return {'status': 'ok', 'detail': f"closed_order_id={order['orderId']}"}
-
-        # Открытие позиции
         order = place_post_only_with_retries(
             symbol=sig.symbol,
             side=sig.side,
@@ -68,7 +61,6 @@ def handle_signal(data: dict) -> dict:
             retry_interval=1.0
         )
         return {'status': 'ok', 'detail': f"order_id={order['orderId']}"}
-
     except BinanceAPIException as e:
         return {'status': 'error', 'detail': f"BinanceAPI: {e.message}"}
     except RuntimeError as e:

@@ -87,14 +87,9 @@ def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interv
 
 
 def get_current_book(symbol: str) -> dict[str, float]:
-    """
-    Возвращает {'bid': float, 'ask': float}.
-    Сначала пытается из WebSocket latest_book; если нет — REST.
-    """
     book = latest_book.get(symbol)
     if book:
         return book
-    # REST-fallback
     resp = _client.futures_order_book(symbol=symbol, limit=5)
     bid = float(resp["bids"][0][0])
     ask = float(resp["asks"][0][0])
@@ -108,18 +103,12 @@ def place_post_only_with_retries(
     max_deviation_pct: float = 0.1,
     retry_interval: float = 1.0
 ) -> dict:
-    """
-    Динамический retry без внешнего base_price.
-    Базовая цена = best_bid (для BUY) или best_ask (для SELL) из WebSocket/REST.
-    """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
 
-    # Получаем базовую цену
     book = get_current_book(symbol)
     base_price = book["bid"] if side.upper() == "BUY" else book["ask"]
 
-    # Границы отклонения
     max_dev_abs = base_price * max_deviation_pct / 100
     max_offset = max_dev_abs + tick
     offset = 0.0
@@ -127,9 +116,9 @@ def place_post_only_with_retries(
 
     while True:
         price_raw = (base_price + offset) if side.upper() == "BUY" else (base_price - offset)
-        price = float(f"{price_raw:.{abs(int(round(math.log10(tick))))}f}")
+        precision = abs(int(round(math.log10(tick))))
+        price = float(f"{price_raw:.{precision}f}")
 
-        # Отменяем предыдущий ордер, если был
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
@@ -137,7 +126,6 @@ def place_post_only_with_retries(
             except Exception:
                 pass
 
-        # Пытаемся создать новый ордер
         try:
             order = _client.futures_create_order(
                 symbol=symbol,
@@ -148,42 +136,32 @@ def place_post_only_with_retries(
                 quantity=str(quantity)
             )
         except BinanceAPIException as e:
-            # Если заявка отклонена как taker, продолжаем ретрай с увеличенным offset
             if "Post Only order will be rejected" in e.message:
                 logger.info(f"Post-Only rejected at price {price}: retrying")
                 offset += tick
                 if offset > max_offset:
                     raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
                 continue
-            # В остальных случаях пробрасываем ошибку
             raise
 
         last_order_id = order["orderId"]
         logger.info(f"Placed order {last_order_id} at price {price}, offset={offset}")
 
-        # Ждем небольшой промежуток перед проверкой
         time.sleep(retry_interval)
 
-        # Проверяем статус
         o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
         status = o.get("status")
         logger.info(f"Order {last_order_id} status: {status}")
         if status in ("FILLED", "PARTIALLY_FILLED"):
             return order
 
-        # Увеличиваем смещение и повторяем
         offset += tick
         if offset > max_offset:
             _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
             raise RuntimeError(f"Exceeded max deviation {max_dev_abs:.2f}, aborting retries")
 
 
-
-
 def get_position_amount(symbol: str) -> float:
-    """
-    Возвращает текущий размер позиции для symbol и логгирует его.
-    """
     positions = _client.futures_position_information()
     for p in positions:
         if p['symbol'] == symbol:
