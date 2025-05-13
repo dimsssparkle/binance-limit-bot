@@ -36,10 +36,10 @@ def init_data() -> None:
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not ORDER_BOOK_HISTORY.exists():
-        ORDER_BOOK_HISTORY.write_text("timestamp,symbol,best_bid,best_ask\n")
+        ORDER_BOOK_HISTORY.write_text("timestamp,symbol,best_bid,best_ask")
         logger.info(f"Created {ORDER_BOOK_HISTORY}")
     if not POSITION_HISTORY.exists():
-        POSITION_HISTORY.write_text("timestamp,symbol,positionAmt\n")
+        POSITION_HISTORY.write_text("timestamp,symbol,positionAmt")
         logger.info(f"Created {POSITION_HISTORY}")
 
 
@@ -47,14 +47,14 @@ def log_order_book(symbol: str, best_bid: float, best_ask: float) -> None:
     """Логирует текущие лучшие bid/ask в CSV."""
     ts = datetime.utcnow().isoformat()
     with ORDER_BOOK_HISTORY.open("a") as f:
-        f.write(f"{ts},{symbol},{best_bid},{best_ask}\n")
+        f.write(f"{ts},{symbol},{best_bid},{best_ask}")
 
 
 def log_position(symbol: str, position_amt: float) -> None:
     """Логирует текущий размер позиции в CSV."""
     ts = datetime.utcnow().isoformat()
     with POSITION_HISTORY.open("a") as f:
-        f.write(f"{ts},{symbol},{position_amt}\n")
+        f.write(f"{ts},{symbol},{position_amt}")
 
 
 def get_price_filter(symbol: str) -> dict:
@@ -99,31 +99,35 @@ def place_post_only_with_retries(
     max_attempts: int = 20
 ) -> dict:
     """
-    Выставляет только post-only лимитный ордер:
-      - Для BUY стартовая цена = best_bid - tick;
-      - Для SELL стартовая цена = best_ask + tick;
-    Цена смещается на 1 тик каждый раз, пока не заполнится или не превысит max_deviation_pct.
-    Ограничение по попыткам max_attempts.
+    Выставляет только post-only лимитный ордер с динамическим смещением:
+      - Для BUY: каждый раз берётся актуальный best_bid + tick;
+      - Для SELL: каждый раз берётся актуальный best_ask - tick;
+    Ограничение отклонения в процентах и попыток.
     """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
-
-    book = get_current_book(symbol)
-    base_price = book["bid"] if side.upper() == "BUY" else book["ask"]
-    max_dev = base_price * max_deviation_pct / 100
     last_order_id = None
-    status = None
 
     for attempt in range(1, max_attempts + 1):
+        book = get_current_book(symbol)
+        best_bid, best_ask = book["bid"], book["ask"]
+        # Вычисляем цену близко к топу стакана
         if side.upper() == "BUY":
-            price_raw = base_price - tick * attempt
+            price_raw = best_bid + tick
+            base_price = best_bid
         else:
-            price_raw = base_price + tick * attempt
+            price_raw = best_ask - tick
+            base_price = best_ask
+
+        max_dev = base_price * max_deviation_pct / 100
+        # Если вышли за пределы отклонения — прекращаем
         if abs(price_raw - base_price) > max_dev:
             break
+
         precision = abs(int(round(math.log10(tick))))
         price_str = f"{price_raw:.{precision}f}"
 
+        # Отменяем предыдущий ордер
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
@@ -155,15 +159,14 @@ def place_post_only_with_retries(
         o = _client.futures_get_order(symbol=symbol, orderId=order_id)
         status = o.get("status")
         logger.info(f"Order {order_id} status: {status}")
-        if status == "FILLED":
+        if status in ("FILLED", "PARTIALLY_FILLED"):
             return order
 
     error = f"Order {side} {symbol} {quantity} not filled after {max_attempts} attempts or deviation exceeded"
     logger.error(error)
     raise RuntimeError(error)
 
-
-def get_position_amount(symbol: str) -> float:
+def get_position_amount(symbol: str) -> float:(symbol: str) -> float:
     """Возвращает текущий размер позиции и логирует его."""
     positions = _client.futures_position_information()
     for p in positions:
