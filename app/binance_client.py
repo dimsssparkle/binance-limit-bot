@@ -112,7 +112,7 @@ def place_post_only_with_retries(
     for attempt in range(1, max_attempts + 1):
         book = get_current_book(symbol)
         best_bid, best_ask = book["bid"], book["ask"]
-        price_raw = (best_bid + tick * attempt) if side.upper() == "BUY" else (best_ask - tick * attempt)
+        price_raw = (best_bid - tick * attempt) if side.upper() == "BUY" else (best_ask + tick * attempt)
         base_price = best_bid if side.upper() == "BUY" else best_ask
         max_dev = base_price * max_deviation_pct / 100
         if abs(price_raw - base_price) > max_dev:
