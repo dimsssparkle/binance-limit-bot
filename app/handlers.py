@@ -1,9 +1,8 @@
+# File: app/handlers.py
 """
 app/handlers.py
 
-Обработка сигналов без передачи цены:
-- Базовая цена берётся из WebSocket/REST.
-- Поддержка открытия и закрытия позиций через retry-функцию.
+Обработка сигналов: открытие и закрытие позиций с mutex для предотвращения дублирования.
 """
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
@@ -12,8 +11,14 @@ from app.binance_client import (
     get_position_amount,
     place_post_only_with_retries
 )
+from threading import Lock
+from collections import defaultdict
 
+# Инициализируем папку и файлы
 init_data()
+
+# Мьютексы по символам для синхронизации запросов
+symbol_locks: dict[str, Lock] = defaultdict(Lock)
 
 class Signal(BaseModel):
     symbol: str
@@ -37,8 +42,15 @@ class Signal(BaseModel):
 
 
 def handle_signal(data: dict) -> dict:
+    """
+    Обрабатывает сигнал открытия/закрытия с предотвращением параллельных операций по одному символу.
+    """
+    sig = Signal(**data)
+    lock = symbol_locks[sig.symbol]
+    if not lock.acquire(blocking=False):
+        return {'status': 'error', 'detail': 'Operation already in progress for symbol'}
     try:
-        sig = Signal(**data)
+        # Закрытие позиции
         if sig.action == 'close':
             current_amt = get_position_amount(sig.symbol)
             if current_amt == 0:
@@ -48,22 +60,23 @@ def handle_signal(data: dict) -> dict:
             order = place_post_only_with_retries(
                 symbol=sig.symbol,
                 side=close_side,
-                quantity=qty,
-                max_deviation_pct=0.1,
-                retry_interval=1.0
+                quantity=qty
             )
             return {'status': 'ok', 'detail': f"closed_order_id={order['orderId']}"}
+
+        # Открытие позиции
         order = place_post_only_with_retries(
             symbol=sig.symbol,
             side=sig.side,
-            quantity=sig.quantity,
-            max_deviation_pct=0.1,
-            retry_interval=1.0
+            quantity=sig.quantity
         )
         return {'status': 'ok', 'detail': f"order_id={order['orderId']}"}
+
     except BinanceAPIException as e:
         return {'status': 'error', 'detail': f"BinanceAPI: {e.message}"}
     except RuntimeError as e:
         return {'status': 'error', 'detail': str(e)}
     except ValueError as e:
         return {'status': 'error', 'detail': str(e)}
+    finally:
+        lock.release()
