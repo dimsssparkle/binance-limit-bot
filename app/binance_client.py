@@ -95,31 +95,42 @@ def place_post_only_with_retries(
     side: str,
     quantity: float,
     max_deviation_pct: float = 0.1,
-    retry_interval: float = 0.5,  # уменьшенный интервал для более частых попыток
-    max_attempts: int = 20
+    retry_interval: float = 1,
+    max_attempts: int = 10
 ) -> dict:
     """
     Выставляет post-only лимитный ордер и продолжает попытки размещения при любых отказах,
-    пока не заполнится, либо не исчерпает max_attempts, либо не превысит допустимое отклонение:
-      - Для BUY: price_raw = best_bid - tick * attempt;
-      - Для SELL: price_raw = best_ask + tick * attempt;
-    После каждой неудачной попытки (API exception с reject или статус NEW без fill) повторяет.
+    пока не заполнится, либо не исчерпает max_attempts, либо не превысит допустимое отклонение.
+    При этом проверяет текущую позицию и завершает цикл, как только позиция меняется на ожидаемую величину.
+
+    - Для BUY: price_raw = best_bid - tick * attempt;
+    - Для SELL: price_raw = best_ask + tick * attempt;
     """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
+    # Исходная позиция
+    initial_pos = get_position_amount(symbol)
+    target_pos = initial_pos + quantity if side.upper() == 'BUY' else initial_pos - quantity
     last_order_id = None
 
     for attempt in range(1, max_attempts + 1):
+        # Проверка достижения цели
+        current_pos = get_position_amount(symbol)
+        if (side.upper() == 'BUY' and current_pos >= target_pos) or \
+           (side.upper() == 'SELL' and current_pos <= target_pos):
+            logger.info(f"Position reached target ({current_pos}), stopping retries")
+            return {'orderId': last_order_id}
+
         book = get_current_book(symbol)
-        best_bid, best_ask = book["bid"], book["ask"]
-        # Расчет цены с учетом итерации
-        if side.upper() == "BUY":
+        best_bid, best_ask = book['bid'], book['ask']
+        # Расчет цены
+        if side.upper() == 'BUY':
             price_raw = best_bid - tick * attempt
             base_price = best_bid
         else:
             price_raw = best_ask + tick * attempt
             base_price = best_ask
-        # Проверяем отклонение
+        # Проверка отклонения
         max_dev = base_price * max_deviation_pct / 100
         if abs(price_raw - base_price) > max_dev:
             logger.error(f"Exceeded max deviation after {attempt} attempts")
@@ -127,7 +138,7 @@ def place_post_only_with_retries(
         precision = abs(int(round(math.log10(tick))))
         price_str = f"{price_raw:.{precision}f}"
 
-        # Отменяем предыдущий ордер, если есть
+        # Отмена предыдущего ордера
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
@@ -136,7 +147,7 @@ def place_post_only_with_retries(
                 pass
             last_order_id = None
 
-        # Пытаемся создать ордер
+        # Создание нового ордера
         try:
             order = _client.futures_create_order(
                 symbol=symbol,
@@ -146,32 +157,30 @@ def place_post_only_with_retries(
                 price=price_str,
                 quantity=str(quantity)
             )
-            last_order_id = order["orderId"]
+            last_order_id = order['orderId']
             logger.info(f"Attempt {attempt}/{max_attempts}: placed post-only {side} at {price_str}")
         except BinanceAPIException as e:
-            # При отказе как maker продолжаем попытки
-            if "could not be executed as maker" in e.message or "Post Only order will be rejected" in e.message:
+            if "could not be executed as maker" in e.message or \
+               "Post Only order will be rejected" in e.message:
                 logger.warning(f"Attempt {attempt}: maker reject ({e.message}), retrying")
                 time.sleep(retry_interval)
                 continue
-            # Любые другие ошибки прерывают цикл
             logger.error(f"Attempt {attempt}: unexpected API error ({e.message})")
             raise
 
-        # Ждем перед проверкой статуса
+        # Ожидание и проверка статуса
         time.sleep(retry_interval)
         try:
             o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
-            status = o.get("status")
-        except BinanceAPIException as e:
+            status = o.get('status')
+        except BinanceAPIException:
             logger.warning(f"Attempt {attempt}: cannot fetch order status, retrying")
             time.sleep(retry_interval)
             continue
 
         logger.info(f"Order {last_order_id} status: {status}")
-        if status in ("FILLED", "PARTIALLY_FILLED"):
+        if status in ('FILLED', 'PARTIALLY_FILLED'):
             return o
-        # Иначе — повторяем попытку
         time.sleep(retry_interval)
 
     error = f"Order {side} {symbol} {quantity} not filled after {max_attempts} attempts"
