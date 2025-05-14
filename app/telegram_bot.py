@@ -136,12 +136,28 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage = int(args[3])
     price = float(args[4]) if len(args) == 5 else None
 
+    # if existing opposite position, close it first
+    existing_amt = get_position_amount(symbol)
+    if existing_amt and existing_amt * amt < 0:
+        close_side = 'SELL' if existing_amt > 0 else 'BUY'
+        cancel_open_orders(symbol)
+        close_order = place_post_only_with_retries(symbol, close_side, abs(existing_amt))
+        await update.message.reply_text(
+            f"Closed existing position: order_id={close_order.get('orderId')}"
+        )
+        existing_amt = 0.0
+
     # store leverage for this symbol
     leverage_map[symbol] = leverage
 
     cancel_open_orders(symbol)
-    _client.futures_change_leverage(symbol=symbol, leverage=leverage)
+    # change leverage (ignore reduction errors until positions closed)
+    try:
+        _client.futures_change_leverage(symbol=symbol, leverage=leverage)
+    except Exception as e:
+        logger.warning(f"Leverage change failed: {e}")
 
+    # place new order
     if price is not None:
         order = place_post_only_with_retries(symbol, side, amt, price)
     else:
@@ -163,18 +179,19 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     liq_price = float(pos_info[0].get('liquidationPrice', 0)) if pos_info else 0.0
 
     msg = (
-        f"Символ: {symbol}\n"
-        f"Направление: {side}\n"
-        f"Количество: {amt}\n"
-        f"Цена входа: {entry_price}\n"
-        f"Плечо: {leverage}\n"
-        f"Использованная маржа: {margin_used:.8f}\n"
-        f"Цена ликвидации: {liq_price}\n"
-        f"Комиссия входа: {entry_comm:.8f}\n"
+        f"Символ: {symbol}"
+        f"Направление: {side}"
+        f"Количество: {amt}"
+        f"Цена входа: {entry_price}"
+        f"Плечо: {leverage}"
+        f"Использованная маржа: {margin_used:.8f}"
+        f"Цена ликвидации: {liq_price}"
+        f"Комиссия входа: {entry_comm:.8f}"
         f"Gross комиссия выхода: {exit_comm:.8f}"
     )
 
     position_amt = get_position_amount(symbol)
+    # if position still open and increased size, show active details
     if position_amt and abs(position_amt) > abs(amt):
         await active_trade(update, context)
     else:
@@ -190,5 +207,3 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler('active_trade', active_trade))
     app.add_handler(CommandHandler('create_order', create_order))
     app.run_polling()
-
-
