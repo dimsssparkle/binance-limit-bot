@@ -21,6 +21,17 @@ logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 webhook_lock = Lock()
 webhook_paused = False
 
+# /pause and /resume commands
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global webhook_paused
+    webhook_paused = True
+    await update.message.reply_text("Webhooks processing paused.")
+
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global webhook_paused
+    webhook_paused = False
+    await update.message.reply_text("Webhooks processing resumed.")
+
 # /close_trades - close all open positions
 async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = []
