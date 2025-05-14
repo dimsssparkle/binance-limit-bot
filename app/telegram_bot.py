@@ -44,7 +44,7 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
             side = 'SELL' if amt > 0 else 'BUY'
             order = place_post_only_with_retries(sym, side, abs(amt))
             results.append(f"{sym}: closed_order_id={order.get('orderId')}")
-    text = "\n".join(results) if results else "No positions to close."
+    text = "".join(results) if results else "No positions to close."
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # /close_orders - cancel all open orders
@@ -57,7 +57,7 @@ async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _client.futures_account_balance()
     lines = [f"{a['asset']}: {a['balance']}" for a in account]
-    text = "\n".join(lines) if lines else "No balance data."
+    text = "".join(lines) if lines else "No balance data."
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # Util for summing commission by side
@@ -115,11 +115,11 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"PNL брутто: {pnl_gross:.8f}\n"
             f"Комиссия входа: {entry_comm:.8f}\n"
             f"Gross комиссия выхода: {exit_comm:.8f}\n"
-            f"PNL нетто: {pnl_net:.8f}"
+            f"PNL нетто: {pnl_net:.8f}\n"
         )
         messages.append(msg)
 
-    text = "\n\n".join(messages) or "No active positions."
+    text = "".join(messages) or "No active positions."
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # /create_order - open new position and output summary
@@ -189,13 +189,21 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     position_amt = get_position_amount(symbol)
-(symbol)
     if position_amt and abs(position_amt) > abs(signed_amt):
         await active_trade(update, context)
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
 
 if __name__ == '__main__':
+    app = ApplicationBuilder().token(settings.telegram_token).build()
+    app.add_handler(CommandHandler('pause', pause))
+    app.add_handler(CommandHandler('resume', resume))
+    app.add_handler(CommandHandler('balance', balance))
+    app.add_handler(CommandHandler('close_trades', close_trades))
+    app.add_handler(CommandHandler('close_orders', close_orders))
+    app.add_handler(CommandHandler('active_trade', active_trade))
+    app.add_handler(CommandHandler('create_order', create_order))
+    app.run_polling()
     app = ApplicationBuilder().token(settings.telegram_token).build()
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('resume', resume))
