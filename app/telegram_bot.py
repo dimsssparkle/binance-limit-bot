@@ -40,7 +40,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n".join(lines) if lines else "No balance data."
     await update.message.reply_text(text)
 
-# /active_trade - detailed open positions (with corrected commission summation)
+# /active_trade - detailed open positions (exit commission simplified)
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from app.binance_client import _client
     positions = _client.futures_position_information()
@@ -87,8 +87,10 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         break
             return comm
 
+        # Entry commission summed normally
         entry_comm = sum_commission(is_entry=True)
-        exit_comm = sum_commission(is_entry=False)
+        # For simplicity, exit commission set equal to total entry commission
+        exit_comm = entry_comm
         pnl_net = pnl_gross - entry_comm - exit_comm
 
         msg = (
