@@ -44,6 +44,13 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from app.binance_client import _client
     positions = _client.futures_position_information()
     messages = []
+    # Получаем leverage из аргументов: /active_trade [leverage]
+    args = context.args
+    try:
+        leverage = int(args[0]) if args and args[0].isdigit() else settings.default_leverage
+    except Exception:
+        leverage = settings.default_leverage
+
     for p in positions:
         amt = float(p.get('positionAmt', 0))
         if amt == 0:
@@ -51,31 +58,29 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = p['symbol']
         side = 'LONG' if amt > 0 else 'SHORT'
         entry_price = float(p.get('entryPrice', 0))
-        leverage = int(p.get('leverage', 1))
         # Фактически использованная маржа
         margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
         # Цена ликвидации
         liquidation_price = float(p.get('liquidationPrice', 0))
-        # Маркерная цена для расчёта PnL
+        # Маркерная цена
         mark_data = _client.futures_mark_price(symbol=symbol)
         mark_price = float(mark_data.get('markPrice', 0))
-        # Расчёт брутто-PnL
+        # Брутто-PnL
         pnl_gross = (mark_price - entry_price) * amt
-                # Комиссии входа и выхода (точная из API)
+        # Комиссии
         trades = _client.futures_account_trades(symbol=symbol)
         entry_comm = 0.0
-        exit_comm = 0.0
+        gross_exit_comm = 0.0
         for t in trades:
             qty = float(t.get('qty', 0))
-            side_trade = t.get('side', '')  # 'BUY' или 'SELL'
-            # определяем покупку или продажу
+            side_trade = t.get('side', '')
             if qty == abs(amt) and side_trade == ('BUY' if amt > 0 else 'SELL'):
                 entry_comm += float(t.get('commission', 0))
             if qty == abs(amt) and side_trade != ('BUY' if amt > 0 else 'SELL'):
-                exit_comm += float(t.get('commission', 0))
-        # Чистый PnL с учётом комиссий
-        pnl_net = pnl_gross - entry_comm - exit_comm
-        pnl_net = pnl_gross - entry_comm - exit_comm
+                gross_exit_comm += float(t.get('commission', 0))
+        # Нетто-PnL
+        pnl_net = pnl_gross - entry_comm - gross_exit_comm
+
         msg = (
             f"Символ: {symbol}\n"
             f"Направление: {side}\n"
@@ -85,11 +90,12 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Использованная маржа: {margin_used:.8f}\n"
             f"Цена ликвидации: {liquidation_price}\n"
             f"Комиссия входа: {entry_comm}\n"
-            f"Gross комиссия выхода: {exit_comm}\n"
+            f"Gross комиссия выхода: {gross_exit_comm}\n"
             f"PnL брутто: {pnl_gross:.8f}\n"
             f"PnL нетто: {pnl_net:.8f}"
         )
         messages.append(msg)
+
     reply = "\n---\n".join(messages) if messages else "No active positions."
     await update.message.reply_text(reply)
 
@@ -108,13 +114,15 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /create_order - create default order
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sym = settings.default_symbol
-    qty = settings.default_quantity
     args = context.args
-    side = args[0].upper() if args else 'BUY'
+    side = args[0].upper() if len(args) > 0 else 'BUY'
+    leverage = int(args[1]) if len(args) > 1 and args[1].isdigit() else settings.default_leverage
+    qty = float(args[2]) if len(args) > 2 else settings.default_quantity
+    settings.default_leverage = leverage
     order = place_post_only_with_retries(sym, side, qty)
-    await update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty}")
+    await update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x")
 
-# Build and run the bot
+# Запуск бота
 app = ApplicationBuilder().token(settings.telegram_token).build()
 app.add_handler(CommandHandler('close_trades', close_trades))
 app.add_handler(CommandHandler('close_orders', close_orders))
