@@ -67,25 +67,21 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_price = float(mark_data.get('markPrice', 0))
         # Брутто-PnL
         pnl_gross = (mark_price - entry_price) * amt
-                # Комиссии (в USDT)
+        # Комиссии (в USDT)
         trades = _client.futures_account_trades(symbol=symbol)
         entry_comm = 0.0
         gross_exit_comm = 0.0
         entry_side = 'BUY' if amt > 0 else 'SELL'
-        # Ищем торговый флэт для входа и выхода, в commissionAsset='USDT'
         for t in trades:
             if t.get('commissionAsset') != 'USDT':
                 continue
             qty = float(t.get('qty', 0))
             side_trade = t.get('side', '')
-            # Вход: совпадает сторона и объём
             if qty == abs(amt) and side_trade == entry_side:
                 entry_comm = float(t.get('commission', 0))
-            # Выход: противоположная сторона
             if qty == abs(amt) and side_trade != entry_side:
                 gross_exit_comm = float(t.get('commission', 0))
         # Нетто-PnL
-        pnl_net = pnl_gross - entry_comm - gross_exit_comm
         pnl_net = pnl_gross - entry_comm - gross_exit_comm
 
         msg = (
@@ -125,7 +121,6 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     side = args[0].upper() if len(args) > 0 else 'BUY'
     leverage = int(args[1]) if len(args) > 1 and args[1].isdigit() else settings.default_leverage
     qty = float(args[2]) if len(args) > 2 else settings.default_quantity
-    # Устанавливаем переданное плечо для символа
     from app.binance_client import _client
     try:
         _client.futures_change_leverage(symbol=sym, leverage=leverage)
@@ -134,7 +129,9 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to set leverage: {e}")
     order = place_post_only_with_retries(sym, side, qty)
-    await update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x")(f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x")
+    await update.message.reply_text(
+        f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x"
+    )
 
 # Запуск бота
 app = ApplicationBuilder().token(settings.telegram_token).build()
