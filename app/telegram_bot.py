@@ -35,31 +35,6 @@ def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     webhook_paused = False
     return update.message.reply_text("Webhooks processing resumed.")
 
-# /close_trades - close all open positions
-async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    results = []
-    for sym in settings.symbols:
-        amt = get_position_amount(sym)
-        if amt:
-            side = 'SELL' if amt > 0 else 'BUY'
-            order = place_post_only_with_retries(sym, side, abs(amt))
-            results.append(f"{sym}: closed_order_id={order.get('orderId')}")
-    text = "".join(results) if results else "No positions to close."
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-
-# /close_orders - cancel all open orders
-async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for sym in settings.symbols:
-        cancel_open_orders(sym)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="All open orders cancelled.")
-
-# /balance - futures account balance
-async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    account = _client.futures_account_balance()
-    lines = [f"{a['asset']}: {a['balance']}" for a in account]
-    text = "".join(lines) if lines else "No balance data."
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-
 # Util for summing commission by side
 def is_entry_trade(t, is_entry):
     return (t.get('buyer') is True) is is_entry
@@ -115,11 +90,11 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"PNL брутто: {pnl_gross:.8f}\n"
             f"Комиссия входа: {entry_comm:.8f}\n"
             f"Gross комиссия выхода: {exit_comm:.8f}\n"
-            f"PNL нетто: {pnl_net:.8f}\n"
+            f"PNL нетто: {pnl_net:.8f}"
         )
         messages.append(msg)
 
-    text = "".join(messages) or "No active positions."
+    text = "\n\n".join(messages) or "No active positions."
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # /create_order - open new position and output summary
@@ -171,7 +146,6 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pos_info = _client.futures_position_information(symbol=symbol)
     liq_price = float(pos_info[0].get('liquidationPrice', 0)) if pos_info else 0.0
 
-    # fetch current futures USDT balance
     balances = _client.futures_account_balance()
     usdt_balance = next((float(a['balance']) for a in balances if a['asset'] == 'USDT'), 0.0)
 
@@ -185,7 +159,7 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Цена ликвидации: {liq_price}\n"
         f"Комиссия входа: {entry_comm:.8f}\n"
         f"Gross комиссия выхода: {exit_comm:.8f}\n"
-        f"Futures USDT баланс: {usdt_balance:.8f}\n"
+        f"Futures USDT баланс: {usdt_balance:.8f}"
     )
 
     position_amt = get_position_amount(symbol)
@@ -194,16 +168,69 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
 
+# /close_trades - close all open positions with summary
+async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for sym in settings.symbols:
+        amt = get_position_amount(sym)
+        if not amt:
+            continue
+
+        # Close position
+        side = 'SELL' if amt > 0 else 'BUY'
+        cancel_open_orders(sym)
+        order = place_post_only_with_retries(sym, side, abs(amt))
+        fills = order.get('fills', []) or []
+        if fills:
+            total_qty = sum(float(f['qty']) for f in fills)
+            exit_price = sum(float(f['price']) * float(f['qty']) for f in fills) / total_qty
+        else:
+            exit_price = float(order.get('avgPrice', 0))
+
+        entry_price = 0.0  # retrieve from stored state if available
+        leverage = leverage_map.get(sym, 1)
+        margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
+
+        # Commissions
+        entry_comm = await sum_commission(sym, amt, is_entry=True)
+        exit_comm = await sum_commission(sym, amt, is_entry=False)
+        total_commission = entry_comm + exit_comm
+
+        # PnL
+        pnl_gross = (exit_price - entry_price) * amt
+        pnl_net = pnl_gross - entry_comm - exit_comm
+        total_pnl = pnl_net + total_commission
+
+        # Fetch USDT balance
+        balances = _client.futures_account_balance()
+        usdt_balance = next((float(a['balance']) for a in balances if a['asset'] == 'USDT'), 0.0)
+
+        summary = (
+            f"Символ: {sym}\n"
+            f"Направление: {side}\n"
+            f"Количество: {amt}\n"
+            f"Цена входа: {entry_price}\n"
+            f"Плечо: {leverage}\n"
+            f"Использованная маржа: {margin_used:.8f}\n"
+            f"Общая комиссия: {total_commission:.8f}\n"
+            f"Реализованный PnL: {total_pnl:.8f}\n"
+            f"Futures USDT баланс: {usdt_balance:.8f}"
+        )
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
+
+# /close_orders - cancel all open orders
+async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for sym in settings.symbols:
+        cancel_open_orders(sym)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="All open orders cancelled.")
+
+# /balance - futures account balance
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    account = _client.futures_account_balance()
+    lines = [f"{a['asset']}: {a['balance']}" for a in account]
+    text = "\n".join(lines) if lines else "No balance data."
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(settings.telegram_token).build()
-    app.add_handler(CommandHandler('pause', pause))
-    app.add_handler(CommandHandler('resume', resume))
-    app.add_handler(CommandHandler('balance', balance))
-    app.add_handler(CommandHandler('close_trades', close_trades))
-    app.add_handler(CommandHandler('close_orders', close_orders))
-    app.add_handler(CommandHandler('active_trade', active_trade))
-    app.add_handler(CommandHandler('create_order', create_order))
-    app.run_polling()
     app = ApplicationBuilder().token(settings.telegram_token).build()
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('resume', resume))
