@@ -136,9 +136,12 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage = int(args[3])
     price = float(args[4]) if len(args) == 5 else None
 
+    # signed amount for position comparison
+    signed_amt = amt if side in ('BUY', 'LONG') else -amt
+
     # if existing opposite position, close it first
     existing_amt = get_position_amount(symbol)
-    if existing_amt and existing_amt * amt < 0:
+    if existing_amt and existing_amt * signed_amt < 0:
         close_side = 'SELL' if existing_amt > 0 else 'BUY'
         cancel_open_orders(symbol)
         close_order = place_post_only_with_retries(symbol, close_side, abs(existing_amt))
@@ -157,11 +160,10 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Leverage change failed: {e}")
 
-    # place new order
-    if price is not None:
-        order = place_post_only_with_retries(symbol, side, amt, price)
-    else:
-        order = place_post_only_with_retries(symbol, side, amt)
+    # place new opposite or fresh order
+    order = (place_post_only_with_retries(symbol, side, amt, price)
+             if price is not None else
+             place_post_only_with_retries(symbol, side, amt))
 
     # determine entry price
     fills = order.get('fills', []) or []
@@ -171,28 +173,28 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         entry_price = float(order.get('avgPrice', price or 0))
 
-    entry_comm = await sum_commission(symbol, amt, is_entry=True)
+    entry_comm = await sum_commission(symbol, signed_amt, is_entry=True)
     exit_comm = entry_comm
 
-    margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
+    margin_used = abs(signed_amt * entry_price) / leverage if leverage else 0.0
     pos_info = _client.futures_position_information(symbol=symbol)
     liq_price = float(pos_info[0].get('liquidationPrice', 0)) if pos_info else 0.0
 
     msg = (
-        f"Символ: {symbol}"
-        f"Направление: {side}"
-        f"Количество: {amt}"
-        f"Цена входа: {entry_price}"
-        f"Плечо: {leverage}"
-        f"Использованная маржа: {margin_used:.8f}"
-        f"Цена ликвидации: {liq_price}"
-        f"Комиссия входа: {entry_comm:.8f}"
+        f"Символ: {symbol}\n"
+        f"Направление: {side}\n"
+        f"Количество: {signed_amt}\n"
+        f"Цена входа: {entry_price}\n"
+        f"Плечо: {leverage}\n"
+        f"Использованная маржа: {margin_used:.8f}\n"
+        f"Цена ликвидации: {liq_price}\n"
+        f"Комиссия входа: {entry_comm:.8f}\n"
         f"Gross комиссия выхода: {exit_comm:.8f}"
     )
 
     position_amt = get_position_amount(symbol)
-    # if position still open and increased size, show active details
-    if position_amt and abs(position_amt) > abs(amt):
+    # if net position increased, show full active details
+    if position_amt and abs(position_amt) > abs(signed_amt):
         await active_trade(update, context)
     else:
         await update.message.reply_text(msg)
