@@ -118,9 +118,16 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     side = args[0].upper() if len(args) > 0 else 'BUY'
     leverage = int(args[1]) if len(args) > 1 and args[1].isdigit() else settings.default_leverage
     qty = float(args[2]) if len(args) > 2 else settings.default_quantity
-    settings.default_leverage = leverage
+    # Устанавливаем переданное плечо для символа
+    from app.binance_client import _client
+    try:
+        _client.futures_change_leverage(symbol=sym, leverage=leverage)
+        settings.default_leverage = leverage
+        logger.info(f"Leverage set to {leverage}x for {sym}")
+    except Exception as e:
+        logger.error(f"Failed to set leverage: {e}")
     order = place_post_only_with_retries(sym, side, qty)
-    await update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x")
+    await update.message.reply_text(f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x")(f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x")
 
 # Запуск бота
 app = ApplicationBuilder().token(settings.telegram_token).build()
