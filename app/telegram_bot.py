@@ -22,7 +22,7 @@ webhook_lock = Lock()
 webhook_paused = False
 
 # /pause and /resume commands
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = True
     await update.message.reply_text("Webhooks processing paused.")
@@ -63,10 +63,11 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args
     try:
-        leverage = int(args[0]) if args and args[0].isdigit() else settings.default_leverage
+        leverage = int(args[0]) if args and args[0].isdigit() else settings.leverage
     except Exception:
-        leverage = settings.default_leverage
+        leverage = settings.leverage
 
+    messages = []
     for p in positions:
         amt = float(p.get('positionAmt', 0))
         if amt == 0:
@@ -99,7 +100,6 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         entry_comm = sum_commission(is_entry=True)
         exit_comm = entry_comm
-        pnl_net = pnl_gross - entry_comm - exit_comm
 
         msg = (
             f"Символ: {symbol}\n"
@@ -110,82 +110,70 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Использованная маржа: {margin_used:.8f}\n"
             f"Цена ликвидации: {liquidation_price}\n"
             f"Комиссия входа: {entry_comm:.8f}\n"
-            f"Gross комиссия выхода: {exit_comm:.8f}\n"
-            f"PnL брутто: {pnl_gross:.8f}\n"
-            f"PnL нетто: {pnl_net:.8f}"
+            f"Gross комиссия выхода: {exit_comm:.8f}"
         )
-        await update.message.reply_text(msg)
+        messages.append(msg)
+
+    await update.message.reply_text("\n\n".join(messages))
 
 # /create_order - open new position and output summary
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
-    # expect SYMBOL, SIDE, AMOUNT, optional LEVERAGE, optional PRICE
-    if len(args) < 3 or len(args) > 5:
+    # expect SYMBOL, SIDE, AMOUNT, LEVERAGE, optional PRICE
+    if len(args) < 4 or len(args) > 5:
         await update.message.reply_text(
-            "Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> [LEVERAGE] [PRICE]"
+            "Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> <LEVERAGE> [PRICE]"
         )
         return
-    symbol, side, amt_str = args[0:3]
-    # determine if next arg is leverage or price or both
-    entry_price = None
-    leverage = settings.default_leverage
-    if len(args) >= 4:
-        # if fourth arg is integer leverage
-        if args[3].isdigit():
-            leverage = int(args[3])
-            if len(args) == 5:
-                entry_price = float(args[4])
-        else:
-            entry_price = float(args[3])
-    try:
-        amt = float(amt_str) * (1 if side.upper() in ('BUY', 'LONG') else -1)
-    except ValueError:
-        await update.message.reply_text("Invalid amount. Please enter numeric values.")
-        return
 
-    # Place order (market if price not provided)
-    order = None
-    if entry_price is not None:
-        order = place_post_only_with_retries(symbol, side.upper(), abs(amt), price=entry_price)
-    else:
-        order = place_post_only_with_retries(symbol, side.upper(), abs(amt))
+    symbol = args[0].upper()
+    side = args[1].upper()
+    amt = float(args[2])
+    leverage = int(args[3])
+    price = float(args[4]) if len(args) == 5 else None
 
-    # Calculate fields
-    used_price = entry_price or float(order.get('avgPrice', 0))
-    margin_used = abs(amt * used_price) / leverage if leverage else 0.0
-    pos_info = _client.futures_position_information(symbol=symbol)[0]
-    liquidation_price = float(pos_info.get('liquidationPrice', 0))
-    entry_comm = float(order.get('cummulativeQuoteQty', 0)) * settings.commission_rate
+    # cancel existing orders and set leverage
+    cancel_open_orders(symbol)
+    _client.futures_change_leverage(symbol=symbol, leverage=leverage)
+
+    # place order
+    order = place_post_only_with_retries(symbol, side, amt, price)
+
+    # retrieve entry details
+    entry_price = float(order.get('avgPrice', price or 0))
+    margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
+    liq_price = float(_client.futures_position_information(symbol=symbol)[0].get('liquidationPrice', 0))
+
+    # entry commission simplified, exit commission equal for now
+    entry_comm = float(order.get('fills', [{}])[0].get('commission', 0))
     exit_comm = entry_comm
 
     msg = (
-        f"Символ: {symbol}"
-        f"Направление: {side.upper()}"
-        f"Количество: {amt}"
-        f"Цена входа: {used_price}"
-        f"Плечо: {leverage}"
-        f"Использованная маржа: {margin_used:.8f}"
-        f"Цена ликвидации: {liquidation_price}"
-        f"Комиссия входа: {entry_comm:.8f}"
+        f"Символ: {symbol}\n"
+        f"Направление: {side}\n"
+        f"Количество: {amt}\n"
+        f"Цена входа: {entry_price}\n"
+        f"Плечо: {leverage}\n"
+        f"Использованная маржа: {margin_used:.8f}\n"
+        f"Цена ликвидации: {liq_price}\n"
+        f"Комиссия входа: {entry_comm:.8f}\n"
         f"Gross комиссия выхода: {exit_comm:.8f}"
     )
-    await update.message.reply_text(msg)
 
-# Bot setup
-app = ApplicationBuilder().token(settings.telegram_token).build()
-handlers = [
-    ('close_trades', close_trades),
-    ('close_orders', close_orders),
-    ('balance', balance),
-    ('active_trade', active_trade),  # detailed status
-    ('active_trades', active_trade),
-    ('create_order', create_order),
-    ('pause', pause),
-    ('resume', resume),
-]
-for cmd, func in handlers:
-    app.add_handler(CommandHandler(cmd, func))
+    # if position existed before, show active_trade details instead
+    position_amt = get_position_amount(symbol)
+    if position_amt and abs(position_amt) > amt:
+        await active_trade(update, context)
+    else:
+        await update.message.reply_text(msg)
 
 if __name__ == '__main__':
-    logger.info("Starting Telegram bot...")
+    app = ApplicationBuilder().token(settings.telegram_token).build()
+    app.add_handler(CommandHandler('pause', pause))
+    app.add_handler(CommandHandler('resume', resume))
+    app.add_handler(CommandHandler('balance', balance))
+    app.add_handler(CommandHandler('close_trades', close_trades))
+    app.add_handler(CommandHandler('close_orders', close_orders))
+    app.add_handler(CommandHandler('active_trade', active_trade))
+    app.add_handler(CommandHandler('create_order', create_order))
     app.run_polling()
