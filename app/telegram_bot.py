@@ -57,10 +57,28 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n".join(lines) if lines else "No balance data."
     await update.message.reply_text(text)
 
-# /active_trade - detailed open positions (exit commission simplified)
+# Util for summing commission by side
+async def sum_commission(symbol: str, amt: float, is_entry: bool) -> float:
+    trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
+    target_qty = abs(amt)
+    filled = 0.0
+    comm = 0.0
+    for t in trades:
+        if t.get('commissionAsset') != 'USDT':
+            continue
+        # buyer=True means buy trade
+        if (t.get('buyer') == True) is is_entry:
+            trade_qty = abs(float(t.get('qty', 0)))
+            qty_to_count = min(trade_qty, target_qty - filled)
+            comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
+            filled += qty_to_count
+            if filled >= target_qty:
+                break
+    return comm
+
+# /active_trade - detailed open positions
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     positions = _client.futures_position_information()
-
     messages = []
     for p in positions:
         amt = float(p.get('positionAmt', 0))
@@ -68,32 +86,17 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
         symbol = p['symbol']
         side = 'LONG' if amt > 0 else 'SHORT'
-        entry_price = float(p.get('entryPrice', 0))
-        leverage = int(p.get('leverage', 1))
-        margin_used = float(p.get('initialMargin', abs(amt * entry_price) / leverage))
-        liquidation_price = float(p.get('liquidationPrice', 0))
+        # get fresh position info for leverage
+        info = _client.futures_position_information(symbol=symbol)
+        pos = next((x for x in info if x['symbol'] == symbol), {})
+        leverage = int(pos.get('leverage', 1))
+        entry_price = float(pos.get('entryPrice', 0))
+        margin_used = float(pos.get('initialMargin', abs(amt * entry_price) / leverage))
+        liquidation_price = float(pos.get('liquidationPrice', 0))
         mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
         pnl_gross = (mark_price - entry_price) * amt
 
-        trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
-        
-        def sum_commission(is_entry: bool):
-            target_qty = abs(amt)
-            filled = 0.0
-            comm = 0.0
-            for t in trades:
-                if t.get('commissionAsset') != 'USDT':
-                    continue
-                if (t.get('buyer') == (amt > 0)) is is_entry:
-                    trade_qty = abs(float(t.get('qty', 0)))
-                    qty_to_count = min(trade_qty, target_qty - filled)
-                    comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
-                    filled += qty_to_count
-                    if filled >= target_qty:
-                        break
-            return comm
-
-        entry_comm = sum_commission(is_entry=True)
+        entry_comm = await sum_commission(symbol, amt, is_entry=True)
         exit_comm = entry_comm
         pnl_net = pnl_gross - entry_comm - exit_comm
 
@@ -138,19 +141,21 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         order = place_post_only_with_retries(symbol, side, amt)
 
+    # determine entry price from fills or avgPrice
     fills = order.get('fills', []) or []
     if fills:
         total_qty = sum(float(f['qty']) for f in fills)
         entry_price = sum(float(f['price']) * float(f['qty']) for f in fills) / total_qty
-        entry_comm = sum(float(f.get('commission', 0)) for f in fills)
     else:
         entry_price = float(order.get('avgPrice', price or 0))
-        entry_comm = float(order.get('fills', [{'commission': 0}])[0].get('commission', 0))
+
+    # sum entry commission
+    entry_comm = await sum_commission(symbol, amt, is_entry=True)
     exit_comm = entry_comm
 
     margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
-    position_info = _client.futures_position_information(symbol=symbol)
-    liq_price = float(position_info[0].get('liquidationPrice', 0)) if position_info else 0.0
+    pos_info = _client.futures_position_information(symbol=symbol)
+    liq_price = float(pos_info[0].get('liquidationPrice', 0)) if pos_info else 0.0
 
     msg = (
         f"Символ: {symbol}\n"
