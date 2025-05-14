@@ -61,16 +61,20 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_price = float(mark_data.get('markPrice', 0))
         # Расчёт брутто-PnL
         pnl_gross = (mark_price - entry_price) * amt
-        # Комиссия входа (точная из API)
+                # Комиссии входа и выхода (точная из API)
         trades = _client.futures_account_trades(symbol=symbol)
         entry_comm = 0.0
         exit_comm = 0.0
         for t in trades:
-            if float(t['qty']) == abs(amt) and t['isBuyer'] == (amt > 0):
+            qty = float(t.get('qty', 0))
+            side_trade = t.get('side', '')  # 'BUY' или 'SELL'
+            # определяем покупку или продажу
+            if qty == abs(amt) and side_trade == ('BUY' if amt > 0 else 'SELL'):
                 entry_comm += float(t.get('commission', 0))
-            if float(t['qty']) == abs(amt) and t['isBuyer'] != (amt > 0):
+            if qty == abs(amt) and side_trade != ('BUY' if amt > 0 else 'SELL'):
                 exit_comm += float(t.get('commission', 0))
         # Чистый PnL с учётом комиссий
+        pnl_net = pnl_gross - entry_comm - exit_comm
         pnl_net = pnl_gross - entry_comm - exit_comm
         msg = (
             f"Символ: {symbol}\n"
