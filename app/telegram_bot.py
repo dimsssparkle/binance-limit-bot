@@ -135,13 +135,19 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cancel_open_orders(symbol)
     _client.futures_change_leverage(symbol=symbol, leverage=leverage)
 
-    order = place_post_only_with_retries(symbol, side, amt, price)
+    # Place order with or without limit price
+    if price is not None:
+        order = place_post_only_with_retries(symbol, side, amt, price)
+    else:
+        order = place_post_only_with_retries(symbol, side, amt)
 
     entry_price = float(order.get('avgPrice', price or 0))
     margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
-    liq_price = float(_client.futures_position_information(symbol=symbol)[0].get('liquidationPrice', 0))
+    position_info = _client.futures_position_information(symbol=symbol)
+    liq_price = float(position_info[0].get('liquidationPrice', 0)) if position_info else 0.0
 
-    entry_comm = float(order.get('fills', [{}])[0].get('commission', 0))
+    fills = order.get('fills', []) or []
+    entry_comm = float(fills[0].get('commission', 0)) if fills else 0.0
     exit_comm = entry_comm
 
     msg = (
