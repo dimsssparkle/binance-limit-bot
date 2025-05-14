@@ -39,12 +39,12 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n".join(lines) if lines else "No balance data."
     await update.message.reply_text(text)
 
-# /active_trade - detailed open positions
+# /active_trade - detailed open positions (with raw trades logging)
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from app.binance_client import _client
     positions = _client.futures_position_information()
     messages = []
-    # Получаем leverage из аргументов: /active_trade [leverage]
+    # Leverage from args or default
     args = context.args
     try:
         leverage = int(args[0]) if args and args[0].isdigit() else settings.default_leverage
@@ -58,29 +58,24 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = p['symbol']
         side = 'LONG' if amt > 0 else 'SHORT'
         entry_price = float(p.get('entryPrice', 0))
-        # Фактически использованная маржа
         margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
-        # Цена ликвидации
         liquidation_price = float(p.get('liquidationPrice', 0))
-        # Маркерная цена
-        mark_data = _client.futures_mark_price(symbol=symbol)
-        mark_price = float(mark_data.get('markPrice', 0))
-        # Брутто-PnL
+        mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
         pnl_gross = (mark_price - entry_price) * amt
-        # Комиссии (в USDT)
+
+        # Fetch raw trades and log
         trades = _client.futures_account_trades(symbol=symbol)
-        # Суммируем комиссии входа (isBuyer == True для Long) и выхода
+        logger.info(f"Raw trades for {symbol}: {trades}")
+
+        # Sum commissions in USDT
         entry_comm = sum(
-            float(t.get('commission', 0))
-            for t in trades
+            float(t.get('commission', 0)) for t in trades
             if t.get('commissionAsset') == 'USDT' and t.get('isBuyer') == (amt > 0)
         )
         exit_comm = sum(
-            float(t.get('commission', 0))
-            for t in trades
+            float(t.get('commission', 0)) for t in trades
             if t.get('commissionAsset') == 'USDT' and t.get('isBuyer') != (amt > 0)
         )
-        # Нетто-PnL
         pnl_net = pnl_gross - entry_comm - exit_comm
 
         msg = (
@@ -132,15 +127,19 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x"
     )
 
-# Запуск бота
+# Bot setup
 app = ApplicationBuilder().token(settings.telegram_token).build()
-app.add_handler(CommandHandler('close_trades', close_trades))
-app.add_handler(CommandHandler('close_orders', close_orders))
-app.add_handler(CommandHandler('balance', balance))
-app.add_handler(CommandHandler('active_trade', active_trade))
-app.add_handler(CommandHandler('resume', resume))
-app.add_handler(CommandHandler('pause', pause))
-app.add_handler(CommandHandler('create_order', create_order))
+handlers = [
+    ('close_trades', close_trades),
+    ('close_orders', close_orders),
+    ('balance', balance),
+    ('active_trade', active_trade),
+    ('resume', resume),
+    ('pause', pause),
+    ('create_order', create_order),
+]
+for cmd, func in handlers:
+    app.add_handler(CommandHandler(cmd, func))
 
 if __name__ == '__main__':
     logger.info("Starting Telegram bot...")
