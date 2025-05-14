@@ -109,10 +109,19 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /create_order - open new position and output summary
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # пример: /create_order ETHUSDT SHORT 0.02 2590.9
-    symbol, side, amt_str, price_str = context.args
-    amt = float(amt_str) * (1 if side.upper() == 'BUY' else -1)
-    entry_price = float(price_str)
+    args = context.args
+    if len(args) != 4:
+        await update.message.reply_text(
+            "Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> <PRICE>"
+        )
+        return
+    symbol, side, amt_str, price_str = args
+    try:
+        amt = float(amt_str) * (1 if side.upper() in ('BUY', 'LONG') else -1)
+        entry_price = float(price_str)
+    except ValueError:
+        await update.message.reply_text("Invalid amount or price. Please enter numeric values.")
+        return
     leverage = settings.default_leverage
 
     # Place order
@@ -120,7 +129,6 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Calculate fields
     margin_used = abs(amt * entry_price) / leverage
-    # Binance client returns list; take first position for liquidation price
     pos_info = _client.futures_position_information(symbol=symbol)[0]
     liquidation_price = float(pos_info.get('liquidationPrice', 0))
     entry_comm = float(order.get('cummulativeQuoteQty', 0)) * settings.commission_rate
