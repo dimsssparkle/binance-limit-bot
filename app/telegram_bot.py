@@ -171,6 +171,10 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pos_info = _client.futures_position_information(symbol=symbol)
     liq_price = float(pos_info[0].get('liquidationPrice', 0)) if pos_info else 0.0
 
+    # fetch current futures USDT balance
+    balances = _client.futures_account_balance()
+    usdt_balance = next((float(a['balance']) for a in balances if a['asset'] == 'USDT'), 0.0)
+
     summary = (
         f"Символ: {symbol}\n"
         f"Направление: {side}\n"
@@ -180,10 +184,12 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Использованная маржа: {margin_used:.8f}\n"
         f"Цена ликвидации: {liq_price}\n"
         f"Комиссия входа: {entry_comm:.8f}\n"
-        f"Gross комиссия выхода: {exit_comm:.8f}"
+        f"Gross комиссия выхода: {exit_comm:.8f}\n"
+        f"Futures USDT баланс: {usdt_balance:.8f}\n"
     )
 
     position_amt = get_position_amount(symbol)
+(symbol)
     if position_amt and abs(position_amt) > abs(signed_amt):
         await active_trade(update, context)
     else:
