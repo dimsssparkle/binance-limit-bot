@@ -3,7 +3,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from app.config import settings
 from app.binance_client import get_position_amount, cancel_open_orders, place_post_only_with_retries
-from app.handlers import handle_signal
 from threading import Lock
 
 # Configure logging
@@ -41,11 +40,12 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n".join(lines) if lines else "No balance data."
     await update.message.reply_text(text)
 
-# /active_trade - detailed open positions (with raw trades logging)
+# /active_trade - detailed open positions (with corrected commission summation)
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from app.binance_client import _client
     positions = _client.futures_position_information()
     messages = []
+
     # Leverage from args or default
     args = context.args
     try:
@@ -65,19 +65,30 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
         pnl_gross = (mark_price - entry_price) * amt
 
-        # Fetch raw trades and log
-        trades = _client.futures_account_trades(symbol=symbol)
+        # Fetch raw trades
+        trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
         logger.info(f"Raw trades for {symbol}: {trades}")
 
-                # Sum commissions in USDT using 'buyer' field from raw trades
-        entry_comm = sum(
-            float(t.get('commission', 0)) for t in trades
-            if t.get('commissionAsset') == 'USDT' and t.get('buyer') == (amt > 0)
-        )
-        exit_comm = sum(
-            float(t.get('commission', 0)) for t in trades
-            if t.get('commissionAsset') == 'USDT' and t.get('buyer') != (amt > 0)
-        )
+        # Helper to sum commission for first matching trades up to target qty
+        def sum_commission(is_entry: bool):
+            target_qty = abs(amt)
+            filled = 0.0
+            comm = 0.0
+            for t in trades:
+                if t.get('commissionAsset') != 'USDT':
+                    continue
+                if (t.get('buyer') == (amt > 0)) is is_entry:
+                    trade_qty = abs(float(t.get('qty', 0)))
+                    qty_to_count = min(trade_qty, target_qty - filled)
+                    if trade_qty > 0:
+                        comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
+                    filled += qty_to_count
+                    if filled >= target_qty:
+                        break
+            return comm
+
+        entry_comm = sum_commission(is_entry=True)
+        exit_comm = sum_commission(is_entry=False)
         pnl_net = pnl_gross - entry_comm - exit_comm
 
         msg = (
@@ -88,8 +99,8 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Плечо: {leverage}\n"
             f"Использованная маржа: {margin_used:.8f}\n"
             f"Цена ликвидации: {liquidation_price}\n"
-            f"Комиссия входа: {entry_comm}\n"
-            f"Gross комиссия выхода: {exit_comm}\n"
+            f"Комиссия входа: {entry_comm:.8f}\n"
+            f"Gross комиссия выхода: {exit_comm:.8f}\n"
             f"PnL брутто: {pnl_gross:.8f}\n"
             f"PnL нетто: {pnl_net:.8f}"
         )
