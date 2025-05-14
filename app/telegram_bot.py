@@ -22,15 +22,15 @@ webhook_lock = Lock()
 webhook_paused = False
 
 # /pause and /resume commands
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = True
-    await update.message.reply_text("Webhooks processing paused.")
+    return update.message.reply_text("Webhooks processing paused.")
 
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = False
-    await update.message.reply_text("Webhooks processing resumed.")
+    return update.message.reply_text("Webhooks processing resumed.")
 
 # /close_trades - close all open positions
 async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,12 +61,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     positions = _client.futures_position_information()
 
-    args = context.args
-    try:
-        leverage = int(args[0]) if args and args[0].isdigit() else settings.leverage
-    except Exception:
-        leverage = settings.leverage
-
     messages = []
     for p in positions:
         amt = float(p.get('positionAmt', 0))
@@ -75,7 +69,8 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = p['symbol']
         side = 'LONG' if amt > 0 else 'SHORT'
         entry_price = float(p.get('entryPrice', 0))
-        margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
+        leverage = int(p.get('leverage', 1))
+        margin_used = float(p.get('initialMargin', abs(amt * entry_price) / leverage))
         liquidation_price = float(p.get('liquidationPrice', 0))
         mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
         pnl_gross = (mark_price - entry_price) * amt
@@ -143,15 +138,19 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         order = place_post_only_with_retries(symbol, side, amt)
 
-    entry_price = float(order.get('avgPrice', price or 0))
+    fills = order.get('fills', []) or []
+    if fills:
+        total_qty = sum(float(f['qty']) for f in fills)
+        entry_price = sum(float(f['price']) * float(f['qty']) for f in fills) / total_qty
+        entry_comm = sum(float(f.get('commission', 0)) for f in fills)
+    else:
+        entry_price = float(order.get('avgPrice', price or 0))
+        entry_comm = float(order.get('fills', [{'commission': 0}])[0].get('commission', 0))
+    exit_comm = entry_comm
+
     margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
     position_info = _client.futures_position_information(symbol=symbol)
     liq_price = float(position_info[0].get('liquidationPrice', 0)) if position_info else 0.0
-
-    fills = order.get('fills', []) or []
-    entry_comm = float(fills[0].get('commission', 0)) if fills else 0.0
-    exit_comm = entry_comm
-    # gross PnL not shown on create, follow with active_trade if multi-fill
 
     msg = (
         f"Символ: {symbol}\n"
