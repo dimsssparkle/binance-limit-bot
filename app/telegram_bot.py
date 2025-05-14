@@ -1,4 +1,3 @@
-
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -70,14 +69,14 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         trades = _client.futures_account_trades(symbol=symbol)
         logger.info(f"Raw trades for {symbol}: {trades}")
 
-        # Sum commissions in USDT
+                # Sum commissions in USDT using 'buyer' field from raw trades
         entry_comm = sum(
             float(t.get('commission', 0)) for t in trades
-            if t.get('commissionAsset') == 'USDT' and t.get('isBuyer') == (amt > 0)
+            if t.get('commissionAsset') == 'USDT' and t.get('buyer') == (amt > 0)
         )
         exit_comm = sum(
             float(t.get('commission', 0)) for t in trades
-            if t.get('commissionAsset') == 'USDT' and t.get('isBuyer') != (amt > 0)
+            if t.get('commissionAsset') == 'USDT' and t.get('buyer') != (amt > 0)
         )
         pnl_net = pnl_gross - entry_comm - exit_comm
 
@@ -148,4 +147,3 @@ for cmd, func in handlers:
 if __name__ == '__main__':
     logger.info("Starting Telegram bot...")
     app.run_polling()
-
