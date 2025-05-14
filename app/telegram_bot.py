@@ -50,7 +50,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     positions = _client.futures_position_information()
 
-    # Determine leverage from args or default
     args = context.args
     try:
         leverage = int(args[0]) if args and args[0].isdigit() else settings.default_leverage
@@ -69,7 +68,6 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
         pnl_gross = (mark_price - entry_price) * amt
 
-        # Fetch trades and sum commissions
         trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
 
         def sum_commission(is_entry: bool):
@@ -110,53 +108,57 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /create_order - open new position and output summary
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
-    if len(args) != 4:
+    # expect SYMBOL, SIDE, AMOUNT, optional LEVERAGE, optional PRICE
+    if len(args) < 3 or len(args) > 5:
         await update.message.reply_text(
-            "Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> <PRICE>"
+            "Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> [LEVERAGE] [PRICE]"
         )
         return
-    symbol, side, amt_str, price_str = args
+    symbol, side, amt_str = args[0:3]
+    # determine if next arg is leverage or price or both
+    entry_price = None
+    leverage = settings.default_leverage
+    if len(args) >= 4:
+        # if fourth arg is integer leverage
+        if args[3].isdigit():
+            leverage = int(args[3])
+            if len(args) == 5:
+                entry_price = float(args[4])
+        else:
+            entry_price = float(args[3])
     try:
         amt = float(amt_str) * (1 if side.upper() in ('BUY', 'LONG') else -1)
-        entry_price = float(price_str)
     except ValueError:
-        await update.message.reply_text("Invalid amount or price. Please enter numeric values.")
+        await update.message.reply_text("Invalid amount. Please enter numeric values.")
         return
-    leverage = settings.default_leverage
 
-    # Place order
-    order = place_post_only_with_retries(symbol, side.upper(), abs(amt), price=entry_price)
+    # Place order (market if price not provided)
+    order = None
+    if entry_price is not None:
+        order = place_post_only_with_retries(symbol, side.upper(), abs(amt), price=entry_price)
+    else:
+        order = place_post_only_with_retries(symbol, side.upper(), abs(amt))
 
     # Calculate fields
-    margin_used = abs(amt * entry_price) / leverage
+    used_price = entry_price or float(order.get('avgPrice', 0))
+    margin_used = abs(amt * used_price) / leverage if leverage else 0.0
     pos_info = _client.futures_position_information(symbol=symbol)[0]
     liquidation_price = float(pos_info.get('liquidationPrice', 0))
     entry_comm = float(order.get('cummulativeQuoteQty', 0)) * settings.commission_rate
     exit_comm = entry_comm
 
     msg = (
-        f"Символ: {symbol}\n"
-        f"Направление: {side.upper()}\n"
-        f"Количество: {amt}\n"
-        f"Цена входа: {entry_price}\n"
-        f"Плечо: {leverage}\n"
-        f"Использованная маржа: {margin_used:.8f}\n"
-        f"Цена ликвидации: {liquidation_price}\n"
-        f"Комиссия входа: {entry_comm:.8f}\n"
-        f"Gross комиссия выхода: {exit_comm:.8f}\n"
+        f"Символ: {symbol}"
+        f"Направление: {side.upper()}"
+        f"Количество: {amt}"
+        f"Цена входа: {used_price}"
+        f"Плечо: {leverage}"
+        f"Использованная маржа: {margin_used:.8f}"
+        f"Цена ликвидации: {liquidation_price}"
+        f"Комиссия входа: {entry_comm:.8f}"
+        f"Gross комиссия выхода: {exit_comm:.8f}"
     )
     await update.message.reply_text(msg)
-
-# /pause and /resume handlers
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global webhook_paused
-    webhook_paused = True
-    await update.message.reply_text("Webhooks processing paused.")
-
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global webhook_paused
-    webhook_paused = False
-    await update.message.reply_text("Webhooks processing resumed.")
 
 # Bot setup
 app = ApplicationBuilder().token(settings.telegram_token).build()
