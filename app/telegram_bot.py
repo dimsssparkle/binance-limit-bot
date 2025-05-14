@@ -69,18 +69,16 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pnl_gross = (mark_price - entry_price) * amt
         # Комиссии (в USDT)
         trades = _client.futures_account_trades(symbol=symbol)
-        entry_comm = 0.0
-        gross_exit_comm = 0.0
-        entry_side = 'BUY' if amt > 0 else 'SELL'
-        for t in trades:
-            if t.get('commissionAsset') != 'USDT':
-                continue
-            qty = float(t.get('qty', 0))
-            side_trade = t.get('side', '')
-            if qty == abs(amt) and side_trade == entry_side:
-                entry_comm = float(t.get('commission', 0))
-            if qty == abs(amt) and side_trade != entry_side:
-                gross_exit_comm = float(t.get('commission', 0))
+        entry_comm = sum(
+            float(t.get('commission', 0))
+            for t in trades
+            if t.get('commissionAsset') == 'USDT' and t.get('side', '').upper() == entry_side
+        )
+        gross_exit_comm = sum(
+            float(t.get('commission', 0))
+            for t in trades
+            if t.get('commissionAsset') == 'USDT' and t.get('side', '').upper() != entry_side
+        )
         # Нетто-PnL
         pnl_net = pnl_gross - entry_comm - gross_exit_comm
 
