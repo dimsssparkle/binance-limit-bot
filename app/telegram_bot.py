@@ -21,6 +21,9 @@ logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 webhook_lock = Lock()
 webhook_paused = False
 
+# In-memory store for leverage per symbol
+leverage_map = {}
+
 # /pause and /resume commands
 def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
@@ -66,8 +69,7 @@ async def sum_commission(symbol: str, amt: float, is_entry: bool) -> float:
     for t in trades:
         if t.get('commissionAsset') != 'USDT':
             continue
-        # buyer=True means buy trade
-        if (t.get('buyer') == True) is is_entry:
+        if (t.get('buyer') is True) is is_entry:
             trade_qty = abs(float(t.get('qty', 0)))
             qty_to_count = min(trade_qty, target_qty - filled)
             comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
@@ -86,10 +88,11 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
         symbol = p['symbol']
         side = 'LONG' if amt > 0 else 'SHORT'
-        # get fresh position info for leverage
+        # fetch API info for this symbol
         info = _client.futures_position_information(symbol=symbol)
         pos = next((x for x in info if x['symbol'] == symbol), {})
-        leverage = int(pos.get('leverage', 1))
+        # use stored leverage if available, else API value
+        leverage = leverage_map.get(symbol, int(pos.get('leverage', 1)))
         entry_price = float(pos.get('entryPrice', 0))
         margin_used = float(pos.get('initialMargin', abs(amt * entry_price) / leverage))
         liquidation_price = float(pos.get('liquidationPrice', 0))
@@ -133,6 +136,9 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage = int(args[3])
     price = float(args[4]) if len(args) == 5 else None
 
+    # store leverage for this symbol
+    leverage_map[symbol] = leverage
+
     cancel_open_orders(symbol)
     _client.futures_change_leverage(symbol=symbol, leverage=leverage)
 
@@ -141,7 +147,7 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         order = place_post_only_with_retries(symbol, side, amt)
 
-    # determine entry price from fills or avgPrice
+    # determine entry price
     fills = order.get('fills', []) or []
     if fills:
         total_qty = sum(float(f['qty']) for f in fills)
@@ -149,7 +155,6 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         entry_price = float(order.get('avgPrice', price or 0))
 
-    # sum entry commission
     entry_comm = await sum_commission(symbol, amt, is_entry=True)
     exit_comm = entry_comm
 
