@@ -45,22 +45,25 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order = place_post_only_with_retries(sym, side, abs(amt))
             results.append(f"{sym}: closed_order_id={order.get('orderId')}")
     text = "\n".join(results) if results else "No positions to close."
-    await update.message.reply_text(text)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # /close_orders - cancel all open orders
 async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for sym in settings.symbols:
         cancel_open_orders(sym)
-    await update.message.reply_text("All open orders cancelled.")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="All open orders cancelled.")
 
 # /balance - futures account balance
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _client.futures_account_balance()
     lines = [f"{a['asset']}: {a['balance']}" for a in account]
     text = "\n".join(lines) if lines else "No balance data."
-    await update.message.reply_text(text)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # Util for summing commission by side
+def is_entry_trade(t, is_entry):
+    return (t.get('buyer') is True) is is_entry
+
 async def sum_commission(symbol: str, amt: float, is_entry: bool) -> float:
     trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
     target_qty = abs(amt)
@@ -69,7 +72,7 @@ async def sum_commission(symbol: str, amt: float, is_entry: bool) -> float:
     for t in trades:
         if t.get('commissionAsset') != 'USDT':
             continue
-        if (t.get('buyer') is True) is is_entry:
+        if is_entry_trade(t, is_entry):
             trade_qty = abs(float(t.get('qty', 0)))
             qty_to_count = min(trade_qty, target_qty - filled)
             comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
@@ -88,10 +91,8 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
         symbol = p['symbol']
         side = 'LONG' if amt > 0 else 'SHORT'
-        # fetch API info for this symbol
         info = _client.futures_position_information(symbol=symbol)
         pos = next((x for x in info if x['symbol'] == symbol), {})
-        # use stored leverage if available, else API value
         leverage = leverage_map.get(symbol, int(pos.get('leverage', 1)))
         entry_price = float(pos.get('entryPrice', 0))
         margin_used = float(pos.get('initialMargin', abs(amt * entry_price) / leverage))
@@ -118,15 +119,16 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         messages.append(msg)
 
-    await update.message.reply_text("\n\n".join(messages) or "No active positions.")
+    text = "\n\n".join(messages) or "No active positions."
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 # /create_order - open new position and output summary
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
-    # expect SYMBOL, SIDE, AMOUNT, LEVERAGE, optional PRICE
     if len(args) < 4 or len(args) > 5:
-        await update.message.reply_text(
-            "Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> <LEVERAGE> [PRICE]"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> <LEVERAGE> [PRICE]"
         )
         return
 
@@ -136,36 +138,26 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage = int(args[3])
     price = float(args[4]) if len(args) == 5 else None
 
-    # signed amount for position comparison
     signed_amt = amt if side in ('BUY', 'LONG') else -amt
-
-    # if existing opposite position, close it first
     existing_amt = get_position_amount(symbol)
     if existing_amt and existing_amt * signed_amt < 0:
         close_side = 'SELL' if existing_amt > 0 else 'BUY'
         cancel_open_orders(symbol)
         close_order = place_post_only_with_retries(symbol, close_side, abs(existing_amt))
-        await update.message.reply_text(
-            f"Closed existing position: order_id={close_order.get('orderId')}"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Closed existing position: order_id={close_order.get('orderId')}"
         )
         existing_amt = 0.0
 
-    # store leverage for this symbol
     leverage_map[symbol] = leverage
-
     cancel_open_orders(symbol)
-    # change leverage (ignore reduction errors until positions closed)
     try:
         _client.futures_change_leverage(symbol=symbol, leverage=leverage)
     except Exception as e:
         logger.warning(f"Leverage change failed: {e}")
 
-    # place new opposite or fresh order
-    order = (place_post_only_with_retries(symbol, side, amt, price)
-             if price is not None else
-             place_post_only_with_retries(symbol, side, amt))
-
-    # determine entry price
+    order = place_post_only_with_retries(symbol, side, amt, price) if price is not None else place_post_only_with_retries(symbol, side, amt)
     fills = order.get('fills', []) or []
     if fills:
         total_qty = sum(float(f['qty']) for f in fills)
@@ -175,12 +167,11 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     entry_comm = await sum_commission(symbol, signed_amt, is_entry=True)
     exit_comm = entry_comm
-
     margin_used = abs(signed_amt * entry_price) / leverage if leverage else 0.0
     pos_info = _client.futures_position_information(symbol=symbol)
     liq_price = float(pos_info[0].get('liquidationPrice', 0)) if pos_info else 0.0
 
-    msg = (
+    summary = (
         f"Символ: {symbol}\n"
         f"Направление: {side}\n"
         f"Количество: {signed_amt}\n"
@@ -193,11 +184,10 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     position_amt = get_position_amount(symbol)
-    # if net position increased, show full active details
     if position_amt and abs(position_amt) > abs(signed_amt):
         await active_trade(update, context)
     else:
-        await update.message.reply_text(msg)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(settings.telegram_token).build()
