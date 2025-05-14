@@ -22,7 +22,7 @@ webhook_lock = Lock()
 webhook_paused = False
 
 # /pause and /resume commands
-def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = True
     await update.message.reply_text("Webhooks processing paused.")
@@ -132,19 +132,15 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage = int(args[3])
     price = float(args[4]) if len(args) == 5 else None
 
-    # cancel existing orders and set leverage
     cancel_open_orders(symbol)
     _client.futures_change_leverage(symbol=symbol, leverage=leverage)
 
-    # place order
     order = place_post_only_with_retries(symbol, side, amt, price)
 
-    # retrieve entry details
     entry_price = float(order.get('avgPrice', price or 0))
     margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
     liq_price = float(_client.futures_position_information(symbol=symbol)[0].get('liquidationPrice', 0))
 
-    # entry commission simplified, exit commission equal for now
     entry_comm = float(order.get('fills', [{}])[0].get('commission', 0))
     exit_comm = entry_comm
 
@@ -160,9 +156,8 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Gross комиссия выхода: {exit_comm:.8f}"
     )
 
-    # if position existed before, show active_trade details instead
     position_amt = get_position_amount(symbol)
-    if position_amt and abs(position_amt) > amt:
+    if position_amt and abs(position_amt) > abs(amt):
         await active_trade(update, context)
     else:
         await update.message.reply_text(msg)
