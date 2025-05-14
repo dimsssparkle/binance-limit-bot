@@ -1,3 +1,4 @@
+
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -6,10 +7,10 @@ from app.binance_client import get_position_amount, cancel_open_orders, place_po
 from app.handlers import handle_signal
 from threading import Lock
 
+# Configure logging
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))(__name__)
-logger.setLevel(settings.log_level)
+logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
 # Control for webhooks processing
 webhook_lock = Lock()
@@ -136,7 +137,7 @@ handlers = [
     ('close_orders', close_orders),
     ('balance', balance),
     ('active_trade', active_trade),
-    ('active_trades', active_trade),  # alias to capture plural command
+    ('active_trades', active_trade),  # alias
     ('resume', resume),
     ('pause', pause),
     ('create_order', create_order),
@@ -147,3 +148,4 @@ for cmd, func in handlers:
 if __name__ == '__main__':
     logger.info("Starting Telegram bot...")
     app.run_polling()
+
