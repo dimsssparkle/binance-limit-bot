@@ -69,6 +69,7 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pnl_gross = (mark_price - entry_price) * amt
         # Комиссии (в USDT)
         trades = _client.futures_account_trades(symbol=symbol)
+        entry_side = 'BUY' if amt > 0 else 'SELL'
         entry_comm = sum(
             float(t.get('commission', 0))
             for t in trades
