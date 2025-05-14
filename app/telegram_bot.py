@@ -33,7 +33,6 @@ async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /balance - futures account balance
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # TODO: replace with actual binance client call
     from app.binance_client import _client
     account = _client.futures_account_balance()
     lines = [f"{a['asset']}: {a['balance']}" for a in account]
@@ -53,25 +52,41 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         side = 'LONG' if amt > 0 else 'SHORT'
         entry_price = float(p.get('entryPrice', 0))
         leverage = int(p.get('leverage', 1))
+        # Фактически использованная маржа
         margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
+        # Цена ликвидации
         liquidation_price = float(p.get('liquidationPrice', 0))
-        entry_fee = 0.0
-        gross_exit_fee = entry_fee
-        pnl_est = entry_price + entry_fee + gross_exit_fee
+        # Маркерная цена для расчёта PnL
+        mark_data = _client.futures_mark_price(symbol=symbol)
+        mark_price = float(mark_data.get('markPrice', 0))
+        # Расчёт брутто-PnL
+        pnl_gross = (mark_price - entry_price) * amt
+        # Комиссия входа (точная из API)
+        trades = _client.futures_account_trades(symbol=symbol)
+        entry_comm = 0.0
+        exit_comm = 0.0
+        for t in trades:
+            if float(t['qty']) == abs(amt) and t['isBuyer'] == (amt > 0):
+                entry_comm += float(t.get('commission', 0))
+            if float(t['qty']) == abs(amt) and t['isBuyer'] != (amt > 0):
+                exit_comm += float(t.get('commission', 0))
+        # Чистый PnL с учётом комиссий
+        pnl_net = pnl_gross - entry_comm - exit_comm
         msg = (
             f"Символ: {symbol}\n"
             f"Направление: {side}\n"
             f"Количество: {amt}\n"
             f"Цена входа: {entry_price}\n"
             f"Плечо: {leverage}\n"
-            f"Использованная маржа: {margin_used:.6f}\n"
+            f"Использованная маржа: {margin_used:.8f}\n"
             f"Цена ликвидации: {liquidation_price}\n"
-            f"Комиссия входа: {entry_fee}\n"
-            f"Gross комиссия выхода: {gross_exit_fee}\n"
-            f"Ориентировочный PnL: {pnl_est}"
+            f"Комиссия входа: {entry_comm}\n"
+            f"Gross комиссия выхода: {exit_comm}\n"
+            f"PnL брутто: {pnl_gross:.8f}\n"
+            f"PnL нетто: {pnl_net:.8f}"
         )
         messages.append(msg)
-    reply = "\n---\n".join(messages) if messages else 'No active positions.'
+    reply = "\n---\n".join(messages) if messages else "No active positions."
     await update.message.reply_text(reply)
 
 # /resume - resume webhook handling
