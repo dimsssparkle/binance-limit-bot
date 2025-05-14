@@ -2,11 +2,18 @@ import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from app.config import settings
-from app.binance_client import get_position_amount, cancel_open_orders, place_post_only_with_retries
+from app.binance_client import (
+    get_position_amount,
+    cancel_open_orders,
+    place_post_only_with_retries,
+    _client,
+)
 from threading import Lock
 
 # Configure logging
-logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO)
+)
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
@@ -34,7 +41,6 @@ async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /balance - futures account balance
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from app.binance_client import _client
     account = _client.futures_account_balance()
     lines = [f"{a['asset']}: {a['balance']}" for a in account]
     text = "\n".join(lines) if lines else "No balance data."
@@ -42,7 +48,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /active_trade - detailed open positions (exit commission simplified)
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from app.binance_client import _client
     positions = _client.futures_position_information()
     messages = []
 
@@ -65,11 +70,9 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
         pnl_gross = (mark_price - entry_price) * amt
 
-        # Fetch raw trades
+        # Fetch trades
         trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
-        logger.info(f"Raw trades for {symbol}: {trades}")
 
-        # Helper to sum commission for first matching trades up to target qty
         def sum_commission(is_entry: bool):
             target_qty = abs(amt)
             filled = 0.0
@@ -80,16 +83,13 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if (t.get('buyer') == (amt > 0)) is is_entry:
                     trade_qty = abs(float(t.get('qty', 0)))
                     qty_to_count = min(trade_qty, target_qty - filled)
-                    if trade_qty > 0:
-                        comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
+                    comm += float(t.get('commission', 0)) * (qty_to_count / trade_qty)
                     filled += qty_to_count
                     if filled >= target_qty:
                         break
             return comm
 
-        # Entry commission summed normally
         entry_comm = sum_commission(is_entry=True)
-        # For simplicity, exit commission set equal to total entry commission
         exit_comm = entry_comm
         pnl_net = pnl_gross - entry_comm - exit_comm
 
@@ -106,41 +106,46 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"PnL брутто: {pnl_gross:.8f}\n"
             f"PnL нетто: {pnl_net:.8f}"
         )
-        messages.append(msg)
+        await update.message.reply_text(msg)
 
-    reply = "\n---\n".join(messages) if messages else "No active positions."
-    await update.message.reply_text(reply)
+# /create_order - open new position and output summary
+async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # пример: /create_order ETHUSDT SHORT 0.02 2590.9
+    symbol, side, amt, price = context.args
+    amt = float(amt) * (1 if side.upper() == 'BUY' else -1)
+    leverage = settings.default_leverage
+    order = place_post_only_with_retries(symbol, side.upper(), abs(amt), price=float(price))
 
-# /resume - resume webhook handling
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global webhook_paused
-    webhook_paused = False
-    await update.message.reply_text("Webhooks resumed.")
+    # данные позиции
+    entry_price = float(price)
+    margin_used = abs(amt * entry_price) / leverage
+    liquidation_price = _client.futures_position_information(symbol=symbol)[0].get('liquidationPrice')
+    entry_comm = float(order.get('cummulativeQuoteQty', 0)) * settings.commission_rate
+    exit_comm = entry_comm
 
-# /pause - pause webhook handling
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        f"Символ: {symbol}\n"
+        f"Направление: {side.upper()}\n"
+        f"Количество: {amt}\n"
+        f"Цена входа: {entry_price}\n"
+        f"Плечо: {leverage}\n"
+        f"Использованная маржа: {margin_used:.8f}\n"
+        f"Цена ликвидации: {liquidation_price}\n"
+        f"Комиссия входа: {entry_comm:.8f}\n"
+        f"Gross комиссия выхода: {exit_comm:.8f}\n"
+    )
+    await update.message.reply_text(msg)
+
+# /pause and /resume handlers
+def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = True
-    await update.message.reply_text("Webhooks paused.")
+    update.message.reply_text("Webhooks processing paused.")
 
-# /create_order - create default order
-async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sym = settings.default_symbol
-    args = context.args
-    side = args[0].upper() if len(args) > 0 else 'BUY'
-    leverage = int(args[1]) if len(args) > 1 and args[1].isdigit() else settings.default_leverage
-    qty = float(args[2]) if len(args) > 2 else settings.default_quantity
-    from app.binance_client import _client
-    try:
-        _client.futures_change_leverage(symbol=sym, leverage=leverage)
-        settings.default_leverage = leverage
-        logger.info(f"Leverage set to {leverage}x for {sym}")
-    except Exception as e:
-        logger.error(f"Failed to set leverage: {e}")
-    order = place_post_only_with_retries(sym, side, qty)
-    await update.message.reply_text(
-        f"Created {side} order {order.get('orderId')} for {sym} x{qty} @{leverage}x"
-    )
+ def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global webhook_paused
+    webhook_paused = False
+    update.message.reply_text("Webhooks processing resumed.")
 
 # Bot setup
 app = ApplicationBuilder().token(settings.telegram_token).build()
@@ -150,9 +155,9 @@ handlers = [
     ('balance', balance),
     ('active_trade', active_trade),
     ('active_trades', active_trade),  # alias
-    ('resume', resume),
-    ('pause', pause),
     ('create_order', create_order),
+    ('pause', pause),
+    ('resume', resume),
 ]
 for cmd, func in handlers:
     app.add_handler(CommandHandler(cmd, func))
