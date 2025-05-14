@@ -69,19 +69,19 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pnl_gross = (mark_price - entry_price) * amt
         # Комиссии (в USDT)
         trades = _client.futures_account_trades(symbol=symbol)
-        entry_side = 'BUY' if amt > 0 else 'SELL'
+        # Суммируем комиссии входа (isBuyer == True для Long) и выхода
         entry_comm = sum(
             float(t.get('commission', 0))
             for t in trades
-            if t.get('commissionAsset') == 'USDT' and t.get('side', '').upper() == entry_side
+            if t.get('commissionAsset') == 'USDT' and t.get('isBuyer') == (amt > 0)
         )
-        gross_exit_comm = sum(
+        exit_comm = sum(
             float(t.get('commission', 0))
             for t in trades
-            if t.get('commissionAsset') == 'USDT' and t.get('side', '').upper() != entry_side
+            if t.get('commissionAsset') == 'USDT' and t.get('isBuyer') != (amt > 0)
         )
         # Нетто-PnL
-        pnl_net = pnl_gross - entry_comm - gross_exit_comm
+        pnl_net = pnl_gross - entry_comm - exit_comm
 
         msg = (
             f"Символ: {symbol}\n"
@@ -92,7 +92,7 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Использованная маржа: {margin_used:.8f}\n"
             f"Цена ликвидации: {liquidation_price}\n"
             f"Комиссия входа: {entry_comm}\n"
-            f"Gross комиссия выхода: {gross_exit_comm}\n"
+            f"Gross комиссия выхода: {exit_comm}\n"
             f"PnL брутто: {pnl_gross:.8f}\n"
             f"PnL нетто: {pnl_net:.8f}"
         )
