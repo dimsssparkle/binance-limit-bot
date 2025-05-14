@@ -134,6 +134,7 @@ handlers = [
     ('close_orders', close_orders),
     ('balance', balance),
     ('active_trade', active_trade),
+    ('active_trades', active_trade),  # alias to capture plural command
     ('resume', resume),
     ('pause', pause),
     ('create_order', create_order),
