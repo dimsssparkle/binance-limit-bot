@@ -81,7 +81,7 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pnl_gross = (mark_price - entry_price) * amt
 
         trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
-
+        
         def sum_commission(is_entry: bool):
             target_qty = abs(amt)
             filled = 0.0
@@ -100,6 +100,7 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         entry_comm = sum_commission(is_entry=True)
         exit_comm = entry_comm
+        pnl_net = pnl_gross - entry_comm - exit_comm
 
         msg = (
             f"Символ: {symbol}\n"
@@ -109,12 +110,14 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Плечо: {leverage}\n"
             f"Использованная маржа: {margin_used:.8f}\n"
             f"Цена ликвидации: {liquidation_price}\n"
+            f"PNL брутто: {pnl_gross:.8f}\n"
             f"Комиссия входа: {entry_comm:.8f}\n"
-            f"Gross комиссия выхода: {exit_comm:.8f}"
+            f"Gross комиссия выхода: {exit_comm:.8f}\n"
+            f"PNL нетто: {pnl_net:.8f}"
         )
         messages.append(msg)
 
-    await update.message.reply_text("\n\n".join(messages))
+    await update.message.reply_text("\n\n".join(messages) or "No active positions.")
 
 # /create_order - open new position and output summary
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,7 +138,6 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cancel_open_orders(symbol)
     _client.futures_change_leverage(symbol=symbol, leverage=leverage)
 
-    # Place order with or without limit price
     if price is not None:
         order = place_post_only_with_retries(symbol, side, amt, price)
     else:
@@ -149,6 +151,7 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fills = order.get('fills', []) or []
     entry_comm = float(fills[0].get('commission', 0)) if fills else 0.0
     exit_comm = entry_comm
+    # gross PnL not shown on create, follow with active_trade if multi-fill
 
     msg = (
         f"Символ: {symbol}\n"
