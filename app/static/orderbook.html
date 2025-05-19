@@ -42,24 +42,29 @@
         console.error('Invalid JSON:', event.data);
         return;
       }
-      const data = msg.depth;
-      if (!data || !Array.isArray(data.asks) || !Array.isArray(data.bids)) {
-        console.warn('Depth data missing or malformed', data);
+      // Support different message formats
+      const data = msg.depth ?? msg;
+      const asks = Array.isArray(data.asks) ? data.asks.slice(0,20) : [];
+      const bids = Array.isArray(data.bids) ? data.bids.slice(0,20) : [];
+      if (!asks.length && !bids.length) {
+        console.warn('No order book data in message', data);
         return;
       }
-      renderTable('asks', data.asks.slice(0, 20));
-      renderTable('bids', data.bids.slice(0, 20));
+      renderTable('asks', asks);
+      renderTable('bids', bids);
     };
 
     function renderTable(id, rows) {
       const tbody = document.getElementById(id).querySelector('tbody');
       tbody.innerHTML = '';
-      rows.forEach(([price, qty]) => {
+      if (!Array.isArray(rows)) return;
+      rows.forEach(row => {
+        const [price = 0, qty = 0] = row;
         const tr = document.createElement('tr');
         const tdPrice = document.createElement('td');
-        tdPrice.textContent = (parseFloat(price) || 0).toFixed(2);
+        tdPrice.textContent = parseFloat(price).toFixed(2);
         const tdQty = document.createElement('td');
-        tdQty.textContent = (parseFloat(qty) || 0).toFixed(6);
+        tdQty.textContent = parseFloat(qty).toFixed(6);
         tr.appendChild(tdPrice);
         tr.appendChild(tdQty);
         tr.className = id;
