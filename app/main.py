@@ -1,8 +1,4 @@
-"""
-app/main.py
-
-Flask приложение с endpoints /webhook и /debug/files.
-"""
+import os
 from flask import Flask, request, abort, jsonify, send_from_directory
 import logging
 from pathlib import Path
@@ -12,33 +8,34 @@ from app.handlers import handle_signal
 from app.binance_client import init_data
 from app.websocket_manager import start_websocket
 
-
-BASE_DIR = os.path.dirname(__file__)          # корень
-STATIC_DIR = os.path.join(BASE_DIR, 'app', 'static')
-
+# Initialize data and WebSocket
 init_data()
 start_websocket(['ETHUSDT'])
 
+# Configure logging
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# Data directory for debug endpoint
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
-
 logger.info(f"Data directory initialized at: {DATA_DIR}")
+
+# Define Flask app with correct static folder path
+BASE_DIR = os.path.dirname(__file__)
+STATIC_DIR = os.path.join(BASE_DIR, 'static')  # static directory under app/
 
 app = Flask(
     __name__,
-    static_folder=STATIC_DIR,    # говорим Flask, где лежит статика
-    static_url_path='/static'    # и по какому URL её отдать
+    static_folder=STATIC_DIR,
+    static_url_path='/static'
 )
 
-@app.route("/static/<path:filename>")
+@app.route('/static/<path:filename>')
 def static_files(filename):
     return send_from_directory(app.static_folder, filename)
-
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
