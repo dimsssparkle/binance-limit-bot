@@ -13,8 +13,8 @@ from app.binance_client import init_data
 from app.websocket_manager import start_websocket
 
 
-BASE_DIR = os.path.dirname(__file__)          # это /app
-STATIC_DIR = os.path.join(BASE_DIR, 'static') # /app/static
+BASE_DIR = os.path.dirname(__file__)          # корень
+STATIC_DIR = os.path.join(BASE_DIR, 'app', 'static')
 
 init_data()
 start_websocket(['ETHUSDT'])
