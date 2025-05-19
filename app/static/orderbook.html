@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Real-time ETHUSDT Order Book</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+    h1 { text-align: center; margin: 20px 0; }
+    #orderbook { display: flex; justify-content: space-around; margin: 0 20px; }
+    .side { width: 45%; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 4px; text-align: right; border-bottom: 1px solid #ddd; }
+    th { background: #f4f4f4; }
+    .bid { color: green; }
+    .ask { color: red; }
+  </style>
+</head>
+<body>
+  <h1>ETHUSDT Order Book (Top 20)</h1>
+  <div id="orderbook">
+    <div class="side">
+      <h2>Bids</h2>
+      <table id="bids-table">
+        <thead>
+          <tr><th>Price</th><th>Quantity (USDT)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="side">
+      <h2>Asks</h2>
+      <table id="asks-table">
+        <thead>
+          <tr><th>Price</th><th>Quantity (USDT)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const socket = new WebSocket('wss://fstream.binance.com/ws/ethusdt@depth20@100ms');
+    let bids = [], asks = [];
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      bids = data.bids;
+      asks = data.asks;
+      renderTable('bids-table', bids, 'bid');
+      renderTable('asks-table', asks, 'ask');
+    };
+
+    function renderTable(tableId, rows, cls) {
+      const tbody = document.querySelector(`#${tableId} tbody`);
+      tbody.innerHTML = '';
+      for (let i = 0; i < rows.length; i++) {
+        const [price, qty] = rows[i];
+        const tr = document.createElement('tr');
+        tr.classList.add(cls);
+        const tdPrice = document.createElement('td');
+        tdPrice.textContent = parseFloat(price).toFixed(2);
+        const tdQty = document.createElement('td');
+        tdQty.textContent = (parseFloat(price) * parseFloat(qty)).toFixed(2);
+        tr.appendChild(tdPrice);
+        tr.appendChild(tdQty);
+        tbody.appendChild(tr);
+      }
+    }
+  </script>
+</body>
+</html>

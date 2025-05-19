@@ -3,7 +3,7 @@ app/main.py
 
 Flask приложение с endpoints /webhook и /debug/files.
 """
-from flask import Flask, request, abort, jsonify
+from flask import Flask, request, abort, jsonify, send_from_directory
 import logging
 from pathlib import Path
 
@@ -24,7 +24,12 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
 logger.info(f"Data directory initialized at: {DATA_DIR}")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="app/static")
+
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(app.static_folder, filename)
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
