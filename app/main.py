@@ -12,6 +12,10 @@ from app.handlers import handle_signal
 from app.binance_client import init_data
 from app.websocket_manager import start_websocket
 
+
+BASE_DIR = os.path.dirname(__file__)          # это /app
+STATIC_DIR = os.path.join(BASE_DIR, 'static') # /app/static
+
 init_data()
 start_websocket(['ETHUSDT'])
 
@@ -22,9 +26,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
+
 logger.info(f"Data directory initialized at: {DATA_DIR}")
 
-app = Flask(__name__, static_folder="app/static")
+app = Flask(
+    __name__,
+    static_folder=STATIC_DIR,    # говорим Flask, где лежит статика
+    static_url_path='/static'    # и по какому URL её отдать
+)
 
 @app.route("/static/<path:filename>")
 def static_files(filename):
