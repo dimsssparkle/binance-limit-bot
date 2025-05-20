@@ -65,11 +65,11 @@ def debug_files():
 @sock.route("/ws")
 def websocket(ws):
     logger.info("WebSocket connected")
-    # Пример: шлём клиенту обновления стакана
+    # при подключении сразу шлём пару кадров стакана,
+    # а дальше — по таймеру
     while True:
-        book = get_order_book_snapshot()  # ваша функция из websocket_manager
+        book = get_order_book_snapshot('ETHUSDT')
         ws.send_json(book)
-        # небольшой сон, чтобы снизить CPU
         import gevent
         gevent.sleep(0.1)
 
