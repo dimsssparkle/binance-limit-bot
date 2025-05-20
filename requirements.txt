@@ -43,3 +43,4 @@ python-telegram-bot
 flask-sock
 flask-sock[gevent]
 gevent
+gevent-websocket
