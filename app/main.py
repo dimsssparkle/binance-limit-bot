@@ -1,39 +1,53 @@
+# app/main.py
+
+"""
+Flask + Flask-Sock приложение: 
+- HTTP роуты /webhook и /debug/files
+- WebSocket роут /ws для отдачи стакана в реальном времени
+"""
 import os
-from flask import Flask, request, abort, jsonify, send_from_directory
+import time
+import json
 import logging
+import threading
 from pathlib import Path
+
+from flask import Flask, request, abort, jsonify, send_from_directory
+from flask_sock import Sock
 
 from app.config import settings
 from app.handlers import handle_signal
 from app.binance_client import init_data
-from app.websocket_manager import start_websocket
+from app.websocket_manager import start_websocket, latest_depth  # ← см. примечание!
 
-# Initialize data and WebSocket
+# --- Инициализация Binance client & WebSocket depth listener в фоне ---
 init_data()
-start_websocket(['ETHUSDT'])
+# запускаем listener глубины стакана в отдельном потоке
+threading.Thread(target=start_websocket, args=(['ETHUSDT'],), daemon=True).start()
 
-# Configure logging
+# --- Логирование ---
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Data directory for debug endpoint
-DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
+# --- Пути ---
+BASE_DIR = Path(__file__).resolve().parent      # .../app
+STATIC_DIR = BASE_DIR / 'static'                # .../app/static
+DATA_DIR = BASE_DIR.parent / 'data'             # .../data
+
 logger.info(f"Data directory initialized at: {DATA_DIR}")
 
-# Define Flask app with correct static folder path
-BASE_DIR = os.path.dirname(__file__)
-STATIC_DIR = os.path.join(BASE_DIR, 'static')  # static directory under app/
-
+# --- Flask & Sock ---
 app = Flask(
     __name__,
-    static_folder=STATIC_DIR,
+    static_folder=str(STATIC_DIR),
     static_url_path='/static'
 )
+sock = Sock(app)
 
-@app.route('/static/<path:filename>')
+@app.route("/static/<path:filename>")
 def static_files(filename):
     return send_from_directory(app.static_folder, filename)
 
@@ -60,6 +74,18 @@ def debug_files():
     except Exception as e:
         logger.error(f"Error reading data dir: {e}")
         return jsonify({"error": str(e)}), 500
+
+@sock.route('/ws')
+def websocket(ws):
+    """
+    Отдаём браузеру последнюю версию стакана каждую 0.1 с
+    latest_depth — словарь вида {'ETHUSDT': {'asks': [...], 'bids': [...]}}
+    """
+    while True:
+        depth = latest_depth.get('ETHUSDT')
+        if depth:
+            ws.send(json.dumps(depth))
+        time.sleep(0.1)
 
 if __name__ == "__main__":
     cwd = Path().resolve()

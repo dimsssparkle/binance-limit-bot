@@ -1,76 +1,63 @@
+<!-- app/static/orderbook.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Order Book</title>
+  <meta charset="UTF-8" />
+  <title>ETHUSDT Order Book (Top 20 Levels)</title>
   <style>
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: right; }
-    th { background: #f4f4f4; }
-    .asks { background: #ffeeee; }
-    .bids { background: #eeffee; }
+    body { font-family: sans-serif; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+    th, td { border: 1px solid #aaa; padding: 8px; text-align: right; }
+    th { background: #eee; }
+    caption { text-align: left; font-size: 1.2em; margin-bottom: .5em; }
   </style>
 </head>
 <body>
   <h1>ETHUSDT Order Book (Top 20 Levels)</h1>
-  <h2>Asks</h2>
-  <table id="asks">
-    <thead><tr><th>Price</th><th>Quantity</th></tr></thead>
+
+  <table id="asks-table">
+    <caption>Asks</caption>
+    <thead>
+      <tr><th>Price</th><th>Quantity</th></tr>
+    </thead>
     <tbody></tbody>
   </table>
-  <h2>Bids</h2>
-  <table id="bids">
-    <thead><tr><th>Price</th><th>Quantity</th></tr></thead>
+
+  <table id="bids-table">
+    <caption>Bids</caption>
+    <thead>
+      <tr><th>Price</th><th>Quantity</th></tr>
+    </thead>
     <tbody></tbody>
   </table>
 
   <script>
-    // Determine correct WebSocket protocol based on current page protocol
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const socketUrl = `${protocol}://${window.location.host}/ws`;
-    const socket = new WebSocket(socketUrl);
-    socket.onopen = () => console.log('WebSocket opened:', socketUrl);
-    socket.onerror = e => console.error('WebSocket error', e);
+    const asksTbody = document.querySelector('#asks-table tbody');
+    const bidsTbody = document.querySelector('#bids-table tbody');
 
-    socket.onmessage = event => {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch (err) {
-        console.error('Invalid JSON:', event.data);
-        return;
-      }
-      // Support different message formats
-      const data = msg.depth ?? msg;
-      const asks = Array.isArray(data.asks) ? data.asks.slice(0,20) : [];
-      const bids = Array.isArray(data.bids) ? data.bids.slice(0,20) : [];
-      if (!asks.length && !bids.length) {
-        console.warn('No order book data in message', data);
-        return;
-      }
-      renderTable('asks', asks);
-      renderTable('bids', bids);
-    };
-
-    function renderTable(id, rows) {
-      const tbody = document.getElementById(id).querySelector('tbody');
+    function renderTable(tbody, data) {
       tbody.innerHTML = '';
-      if (!Array.isArray(rows)) return;
-      rows.forEach(row => {
-        const [price = 0, qty = 0] = row;
+      for (const [price, qty] of data) {
         const tr = document.createElement('tr');
-        const tdPrice = document.createElement('td');
-        tdPrice.textContent = parseFloat(price).toFixed(2);
-        const tdQty = document.createElement('td');
-        tdQty.textContent = parseFloat(qty).toFixed(6);
-        tr.appendChild(tdPrice);
-        tr.appendChild(tdQty);
-        tr.className = id;
-        tbody.appendChild(tr);
-      });
+        tr.innerHTML = `<td>${price}</td><td>${qty}</td>`;
+        tbody.append(tr);
+      }
     }
+
+    const socket = new WebSocket(`wss://${window.location.host}/ws`);
+
+    socket.onopen = () => console.log('WS connected');
+    socket.onerror = e => console.error('WebSocket error', e);
+    socket.onmessage = evt => {
+      let msg;
+      try { msg = JSON.parse(evt.data); }
+      catch (err) { return console.error('Invalid JSON', err); }
+
+      if (Array.isArray(msg.asks) && Array.isArray(msg.bids)) {
+        renderTable(asksTbody, msg.asks);
+        renderTable(bidsTbody, msg.bids);
+      }
+    };
   </script>
 </body>
 </html>

@@ -30,7 +30,14 @@ def _on_depth_update(msg):
         }
         logger.debug(f"Depth update {symbol}: bid={latest_book[symbol]['bid']}, ask={latest_book[symbol]['ask']}")
 
-def start_websocket(symbols: list[str]) -> None:
+# app/websocket_manager.py
+latest_depth = {}
+
+def start_websocket(symbols: list[str]):
+    def on_depth_update(symbol, asks, bids):
+        latest_depth[symbol] = {"asks": asks, "bids": bids}
+    # ваша логика подписки на Binance и вызова on_depth_update
+
     def runner():
         _twm.start()
         for s in symbols:
