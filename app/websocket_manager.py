@@ -60,12 +60,12 @@ def start_websocket(symbols: list[str]):
         _twm.start()
         for s in symbols:
             logger.info(f"Subscribing to futures depth socket for {s}")
-            # подписка на 20 уровней глубины с интервалом 100ms
+            # подписка на 20 уровней глубины с интервалом 100ms (числовое значение 100)
             _twm.start_depth_socket(
                 callback=_on_depth_update,
                 symbol=s,
                 depth=20,
-                interval='100ms'
+                interval=100
             )
         # блокируем поток, читая данные WebSocket
         _twm.join()

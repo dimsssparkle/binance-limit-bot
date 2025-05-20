@@ -1,32 +1,32 @@
-# app/main.py
-from flask import Flask, request, abort, jsonify, send_from_directory
-from flask_sock import Sock
+import os
+import time
 import logging
 from pathlib import Path
-import os
-
+from flask import Flask, request, abort, jsonify, send_from_directory
+from flask_sock import Sock
 from app.config import settings
 from app.handlers import handle_signal
 from app.binance_client import init_data
-from app.websocket_manager import start_websocket
+from app.websocket_manager import start_websocket, get_order_book_snapshot
 
-# Инициализируем данные и запускаем сборщик стакана
+# Конфигурация папок
+BASE_DIR = os.path.dirname(__file__)
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+
+# Инициализация данных
 init_data()
 start_websocket(['ETHUSDT'])
 
+# Логи
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# директории
-BASE_DIR = os.path.dirname(__file__)
-STATIC_DIR = os.path.join(BASE_DIR, 'static')
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
 logger.info(f"Data directory initialized at: {DATA_DIR}")
 
-# Фласк-приложение
+# Flask-приложение
 app = Flask(
     __name__,
     static_folder=STATIC_DIR,
@@ -62,16 +62,17 @@ def debug_files():
         logger.error(f"Error reading data dir: {e}")
         return jsonify({"error": str(e)}), 500
 
-@sock.route("/ws")
+@sock.route('/ws')
 def websocket(ws):
     logger.info("WebSocket connected")
-    # при подключении сразу шлём пару кадров стакана,
-    # а дальше — по таймеру
-    while True:
-        book = get_order_book_snapshot('ETHUSDT')
-        ws.send_json(book)
-        import gevent
-        gevent.sleep(0.1)
+    try:
+        while True:
+            # Берём текущий снимок стакана
+            book = get_order_book_snapshot('ETHUSDT')
+            ws.send(jsonify(book).get_data(as_text=True))
+            time.sleep(0.1)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
 
 if __name__ == "__main__":
     cwd = Path().resolve()
