@@ -11,8 +11,12 @@ COPY . .
 
 EXPOSE 8000
 
-# Запускаем Gunicorn и в фоне – Telegram-бота
 CMD sh -c "\
-    gunicorn --bind 0.0.0.0:8000 app.main:app & \
+    gunicorn \
+      --bind 0.0.0.0:8000 \
+      --worker-class flask_sock.worker.GeventWorker \
+      --timeout 0 \
+      app.main:app \
+    & \
     python3 -m app.telegram_bot \
 "
