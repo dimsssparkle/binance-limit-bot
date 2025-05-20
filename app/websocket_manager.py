@@ -6,7 +6,7 @@ WebSocket-менеджер для Binance Futures depth stream.
 """
 import logging
 from threading import Thread
-from binance.ws.threaded_stream import ThreadedWebsocketManager
+from binance import ThreadedWebsocketManager
 from app.config import settings
 
 logger = logging.getLogger(__name__)
