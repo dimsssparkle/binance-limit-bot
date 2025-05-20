@@ -1,37 +1,41 @@
-import os
-import time
+"""
+app/main.py
+
+Flask приложение с endpoints /webhook, /debug/files и WebSocket /ws.
+"""
 import logging
+import os
+import json
+import time
 from pathlib import Path
+
 from flask import Flask, request, abort, jsonify, send_from_directory
 from flask_sock import Sock
+
 from app.config import settings
 from app.handlers import handle_signal
 from app.binance_client import init_data
 from app.websocket_manager import start_websocket, get_order_book_snapshot
 
-# Конфигурация папок
+# Настройка директорий
 BASE_DIR = os.path.dirname(__file__)
-STATIC_DIR = os.path.join(BASE_DIR, 'static')
+STATIC_DIR = os.path.join(os.path.dirname(BASE_DIR), 'app', 'static')
 
-# Инициализация данных
+# Запускаем стартовые процессы
 init_data()
 start_websocket(['ETHUSDT'])
 
-# Логи
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
 logger.info(f"Data directory initialized at: {DATA_DIR}")
 
-# Flask-приложение
-app = Flask(
-    __name__,
-    static_folder=STATIC_DIR,
-    static_url_path='/static'
-)
+# Инициализация Flask + Sock
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 sock = Sock(app)
 
 @app.route("/static/<path:filename>")
@@ -40,7 +44,6 @@ def static_files(filename):
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    logger.info("Received webhook request")
     secret_qs = request.args.get("secret", "")
     if secret_qs != settings.webhook_secret:
         abort(401, "Invalid webhook secret (query)")
@@ -64,12 +67,14 @@ def debug_files():
 
 @sock.route('/ws')
 def websocket(ws):
+    """
+    Отправляем клиенту весь стакан раз в 100ms.
+    """
     logger.info("WebSocket connected")
     try:
         while True:
-            # Берём текущий снимок стакана
             book = get_order_book_snapshot('ETHUSDT')
-            ws.send(jsonify(book).get_data(as_text=True))
+            ws.send(json.dumps(book))
             time.sleep(0.1)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")

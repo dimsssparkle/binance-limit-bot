@@ -1,63 +1,59 @@
-<!-- app/static/orderbook.html -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <title>ETHUSDT Order Book (Top 20 Levels)</title>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
-    th, td { border: 1px solid #aaa; padding: 8px; text-align: right; }
-    th { background: #eee; }
-    caption { text-align: left; font-size: 1.2em; margin-bottom: .5em; }
-  </style>
+    <meta charset="UTF-8"/>
+    <title>ETHUSDT Order Book (Top 20 Levels)</title>
+    <style>
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #888; padding: 8px; text-align: center; }
+        th { background: #ddd; }
+        caption { font-size: 1.5em; margin-bottom: 10px; }
+    </style>
 </head>
 <body>
-  <h1>ETHUSDT Order Book (Top 20 Levels)</h1>
+    <h1>ETHUSDT Order Book (Top 20 Levels)</h1>
 
-  <table id="asks-table">
-    <caption>Asks</caption>
-    <thead>
-      <tr><th>Price</th><th>Quantity</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+    <h2>Asks</h2>
+    <table id="asks-table">
+        <tr><th>Price</th><th>Quantity</th></tr>
+    </table>
 
-  <table id="bids-table">
-    <caption>Bids</caption>
-    <thead>
-      <tr><th>Price</th><th>Quantity</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+    <h2>Bids</h2>
+    <table id="bids-table">
+        <tr><th>Price</th><th>Quantity</th></tr>
+    </table>
 
-  <script>
-    const asksTbody = document.querySelector('#asks-table tbody');
-    const bidsTbody = document.querySelector('#bids-table tbody');
-
-    function renderTable(tbody, data) {
-      tbody.innerHTML = '';
-      for (const [price, qty] of data) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${price}</td><td>${qty}</td>`;
-        tbody.append(tr);
-      }
-    }
-
-    const socket = new WebSocket(`wss://${window.location.host}/ws`);
+    <script>
+    // Подключаемся к правильному протоколу
+    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const socket = new WebSocket(protocol + location.host + '/ws');
 
     socket.onopen = () => console.log('WS connected');
     socket.onerror = e => console.error('WebSocket error', e);
-    socket.onmessage = evt => {
-      let msg;
-      try { msg = JSON.parse(evt.data); }
-      catch (err) { return console.error('Invalid JSON', err); }
 
-      if (Array.isArray(msg.asks) && Array.isArray(msg.bids)) {
-        renderTable(asksTbody, msg.asks);
-        renderTable(bidsTbody, msg.bids);
-      }
+    socket.onmessage = event => {
+        const data = JSON.parse(event.data);
+        const asks = data.asks || [];
+        const bids = data.bids || [];
+
+        function renderTable(rows, tableId, reverse=false) {
+            const table = document.getElementById(tableId);
+            // Очищаем все, кроме заголовка
+            table.innerHTML = '<tr><th>Price</th><th>Quantity</th></tr>';
+            const slice = reverse ? rows.slice(0, 20) : rows.slice(0, 20);
+            if (!rows.length) return;
+            slice.forEach(([price, qty]) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+                table.appendChild(tr);
+            });
+        }
+
+        // Asks: от самого дорогого вниз
+        renderTable(asks.sort((a,b) => b[0] - a[0]), 'asks-table');
+        // Bids: от самого дорогого вниз
+        renderTable(bids.sort((a,b) => b[0] - a[0]), 'bids-table');
     };
-  </script>
+    </script>
 </body>
 </html>

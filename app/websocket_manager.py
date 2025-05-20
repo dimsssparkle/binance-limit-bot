@@ -32,7 +32,6 @@ def _on_depth_update(msg):
     Поэтому сначала распаковываем.
     """
     payload = msg.get('data', msg)
-
     symbol = payload.get('s')
     if not symbol:
         # нет символа — игнорируем
@@ -40,7 +39,6 @@ def _on_depth_update(msg):
 
     bids = payload.get('b', [])
     asks = payload.get('a', [])
-
     # Сохраняем полный список глубины
     _order_books[symbol] = {
         'symbol': symbol,
@@ -51,7 +49,6 @@ def _on_depth_update(msg):
     logger.debug(f"Depth update {symbol}: bids={len(bids)}, asks={len(asks)}")
 
 
-
 def start_websocket(symbols: list[str]):
     """
     Запускает поток WebSocket для передачи depth20@100ms по списку символов.
@@ -60,14 +57,13 @@ def start_websocket(symbols: list[str]):
         _twm.start()
         for s in symbols:
             logger.info(f"Subscribing to futures depth socket for {s}")
-            # подписка на 20 уровней глубины с интервалом 100ms (числовое значение 100)
+            # подписка на 20 уровней глубины с интервалом 100ms
             _twm.start_depth_socket(
                 callback=_on_depth_update,
                 symbol=s,
                 depth=20,
                 interval=100
             )
-        # блокируем поток, читая данные WebSocket
         _twm.join()
 
     thread = Thread(target=runner, daemon=True)
