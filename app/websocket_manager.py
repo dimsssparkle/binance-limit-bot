@@ -15,6 +15,9 @@ logger.setLevel(settings.log_level)
 # Кеш последних стаканов: symbol -> {'bids': [...], 'asks': [...], 'timestamp': ...}
 _order_books: dict[str, dict] = {}
 
+# Для обратной совместимости: экспортируем latest_book
+latest_book = _order_books
+
 # Инициализация менеджера с ключами API
 _twm = ThreadedWebsocketManager(
     api_key=settings.binance_api_key,
@@ -46,6 +49,7 @@ def _on_depth_update(msg):
         'timestamp': payload.get('E')
     }
     logger.debug(f"Depth update {symbol}: bids={len(bids)}, asks={len(asks)}")
+
 
 
 def start_websocket(symbols: list[str]):
