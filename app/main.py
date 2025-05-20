@@ -36,7 +36,8 @@ logger.info(f"Data directory initialized at: {DATA_DIR}")
 
 # Инициализация Flask + Sock
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
-sock = Sock(app)
+# явно говорим flask-sock, что работаем под gevent-websocket
+sock = Sock(app, server='gevent')
 
 @app.route("/static/<path:filename>")
 def static_files(filename):

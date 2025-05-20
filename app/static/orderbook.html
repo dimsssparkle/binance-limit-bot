@@ -24,12 +24,17 @@
     </table>
 
     <script>
-    // Подключаемся к правильному протоколу
-    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    const socket = new WebSocket(protocol + location.host + '/ws');
+      const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const socket = new WebSocket(protocol + location.host + '/ws');
 
-    socket.onopen = () => console.log('WS connected');
-    socket.onerror = e => console.error('WebSocket error', e);
+      socket.onopen = () => console.log('WS connected');
+      socket.onerror = e => console.error('WebSocket error', e);
+
+      socket.onclose = ev => {
+        console.warn('WebSocket closed', ev.code, ev.reason);
+        // попытаться переподключиться через секунду
+        setTimeout(() => location.reload(), 1000);
+      };
 
     socket.onmessage = event => {
         const data = JSON.parse(event.data);
