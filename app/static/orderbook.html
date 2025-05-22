@@ -10,8 +10,14 @@
         table { width: 200px; border-collapse: collapse; font-size: 10px; margin-bottom: 5px; }
         th, td { border: 1px solid #888; padding: 2px; }
         th { background: #ccc; }
-        td:first-child { width: 100px; text-align: left; }
-        td:nth-child(2) { width: 100px; text-align: right; }
+        /* Asks/Bids table: 2 columns */
+        #asks-table th:first-child, #bids-table td:first-child { width: 100px; text-align: left; }
+        #asks-table th:nth-child(2), #bids-table td:nth-child(2) { width: 100px; text-align: right; }
+        /* Price table: 3 columns */
+        #price-table th, #price-table td { text-align: center; }
+        #price-table th:first-child, #price-table td:first-child { width: 66px; }
+        #price-table th:nth-child(2), #price-table td:nth-child(2) { width: 66px; }
+        #price-table th:nth-child(3), #price-table td:nth-child(3) { width: 68px; }
         .stats table { margin-bottom: 10px; width: 250px; font-size: 10px; }
         .stats td { padding: 2px; }
         .stats td:first-child { width: 150px; }
@@ -20,7 +26,6 @@
         .insights ul { padding-left: 16px; }
         .insights li { margin-bottom: 4px; padding: 2px; border-radius: 3px; }
         .insight-period { font-weight: bold; }
-        .info { font-size: 10px; margin: 5px 0; text-align: center; }
         .history { width: 450px; font-size: 10px; margin-top: 5px; }
         .history pre { background: #f4f4f4; padding: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
     </style>
@@ -32,13 +37,16 @@
         <div class="container">
           <!-- Asks Table -->
           <table id="asks-table"><tr><th>Price</th><th>Qty</th></tr></table>
-          <!-- Price Info -->
-          <div class="info">
-            Spread: <span id="spread">0.00</span> |
-            Mid Price: <span id="mid-price">0.00</span> |
-            Mark Price: <span id="mark-price">0.00</span>
-          </div>
-          <!-- Bids Table, no header -->
+          <!-- Price/Spread Table -->
+          <table id="price-table">
+            <tr><th>Mid Price</th><th>Mark Price</th><th>Spread</th></tr>
+            <tr>
+              <td id="mid-price">0.00</td>
+              <td id="mark-price">0.00</td>
+              <td id="spread">0.00</td>
+            </tr>
+          </table>
+          <!-- Bids Table (no header) -->
           <table id="bids-table"></table>
         </div>
       </div>
@@ -76,121 +84,98 @@
       let askSpeedHistory = [], bidSpeedHistory = [];
       let askTableSpeedHistory = [], bidTableSpeedHistory = [];
 
-      // Utilities
       function avg(arr) { return arr.reduce((a,b)=>a+b,0)/(arr.length||1); }
-      function colorize(el, label){
+      function colorize(el,label){
         if(/Bullish|Overbought|High depth/.test(label)) el.style.background='rgba(0,255,0,0.2)';
         else if(/Bearish|Oversold|Low depth/.test(label)) el.style.background='rgba(255,0,0,0.2)';
         else el.style.background='transparent';
       }
-
-      // Draw table
-      function renderTable(rows, id, header){
+      function renderTable(rows,id,header){
         const t = document.getElementById(id);
-        let html = header ? '<tr><th>Price</th><th>Qty</th></tr>' : '';
+        let html = header?'<tr><th>Price</th><th>Qty</th></tr>':'';
         const maxQ = Math.max(...rows.map(r=>parseFloat(r[1])),0);
         rows.forEach(([p,q])=>{
           const v = parseFloat(q);
-          const i = maxQ ? v/maxQ : 0;
-          const bg = id==='asks-table' ? `rgba(255,0,0,${i})` : `rgba(0,128,0,${i})`;
+          const i = maxQ? v/maxQ : 0;
+          const bg = id==='asks-table'?`rgba(255,0,0,${i})`:`rgba(0,128,0,${i})`;
           html += `<tr><td>${parseFloat(p).toFixed(2)}</td><td style="background:${bg}">${v.toFixed(6)}</td></tr>`;
         });
         t.innerHTML = html;
       }
-
-      // Single update function
       function update(){
         const now = performance.now();
-        fetch('/api/orderbook')
-          .then(r=>r.json())
-          .then(data=>{
-            const asks = (data.asks||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
-            const bids = (data.bids||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
+        fetch('/api/orderbook').then(r=>r.json()).then(data=>{
+          const asks = (data.asks||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
+          const bids = (data.bids||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
+          const askSum = asks.reduce((s,[,q])=>s+parseFloat(q),0);
+          const bidSum = bids.reduce((s,[,q])=>s+parseFloat(q),0);
+          document.getElementById('asks-sum').textContent = askSum.toFixed(6);
+          document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
-            // Sums
-            const askSum = asks.reduce((s,[,q])=>s+parseFloat(q),0);
-            const bidSum = bids.reduce((s,[,q])=>s+parseFloat(q),0);
-            document.getElementById('asks-sum').textContent = askSum.toFixed(6);
-            document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
+          let as=0, bs=0;
+          const qa = parseFloat(asks[0]?.[1]||0);
+          if(window.lqa!==undefined && qa<window.lqa){
+            as = (window.lqa-qa)/((now-window.tqa)/1000);
+            document.getElementById('ask-speed').textContent = as.toFixed(6);
+          }
+          window.lqa = qa; window.tqa = now;
 
-            // First-level speeds
-            let as=0, bs=0;
-            const qa = parseFloat(asks[0]?.[1]||0);
-            if(window.lqa!==undefined && qa<window.lqa){
-              as = (window.lqa-qa)/((now-window.tqa)/1000);
-              document.getElementById('ask-speed').textContent = as.toFixed(6);
-            }
-            window.lqa = qa; window.tqa = now;
+          const qb = parseFloat(bids[0]?.[1]||0);
+          if(window.lqb!==undefined && qb<window.lqb){
+            bs = (window.lqb-qb)/((now-window.tqb)/1000);
+            document.getElementById('bid-speed').textContent = bs.toFixed(6);
+          }
+          window.lqb = qb; window.tqb = now;
 
-            const qb = parseFloat(bids[0]?.[1]||0);
-            if(window.lqb!==undefined && qb<window.lqb){
-              bs = (window.lqb-qb)/((now-window.tqb)/1000);
-              document.getElementById('bid-speed').textContent = bs.toFixed(6);
-            }
-            window.lqb = qb; window.tqb = now;
+          let ats=0, bts=0;
+          if(window.las!==undefined && askSum<window.las){
+            ats = (window.las-askSum)/((now-window.tas)/1000);
+            document.getElementById('asks-table-speed').textContent = ats.toFixed(6);
+          }
+          window.las = askSum; window.tas = now;
+          if(window.lbs!==undefined && bidSum<window.lbs){
+            bts = (window.lbs-bidSum)/((now-window.tbs)/1000);
+            document.getElementById('bids-table-speed').textContent = bts.toFixed(6);
+          }
+          window.lbs = bidSum; window.tbs = now;
 
-            // Table sum speeds
-            let ats=0, bts=0;
-            if(window.las!==undefined && askSum<window.las){
-              ats = (window.las-askSum)/((now-window.tas)/1000);
-              document.getElementById('asks-table-speed').textContent = ats.toFixed(6);
-            }
-            window.las = askSum; window.tas = now;
-            if(window.lbs!==undefined && bidSum<window.lbs){
-              bts = (window.lbs-bidSum)/((now-window.tbs)/1000);
-              document.getElementById('bids-table-speed').textContent = bts.toFixed(6);
-            }
-            window.lbs = bidSum; window.tbs = now;
+          askSpeedHistory.push(as); if(askSpeedHistory.length>historyLength) askSpeedHistory.shift();
+          bidSpeedHistory.push(bs); if(bidSpeedHistory.length>historyLength) bidSpeedHistory.shift();
+          askTableSpeedHistory.push(ats); if(askTableSpeedHistory.length>historyLength) askTableSpeedHistory.shift();
+          bidTableSpeedHistory.push(bts); if(bidTableSpeedHistory.length>historyLength) bidTableSpeedHistory.shift();
 
-            // Histories
-            askSpeedHistory .push(as); if(askSpeedHistory.length>historyLength) askSpeedHistory.shift();
-            bidSpeedHistory .push(bs); if(bidSpeedHistory.length>historyLength) bidSpeedHistory.shift();
-            askTableSpeedHistory.push(ats); if(askTableSpeedHistory.length>historyLength) askTableSpeedHistory.shift();
-            bidTableSpeedHistory.push(bts); if(bidTableSpeedHistory.length>historyLength) bidTableSpeedHistory.shift();
+          const avgAs = avg(askSpeedHistory), avgBs = avg(bidSpeedHistory), avgAts = avg(askTableSpeedHistory), avgBts = avg(bidTableSpeedHistory);
+          const depth = askSum + bidSum;
+          const depthL = depth>1000?'High depth':'Low depth';
+          const dm = Math.abs(avgAs-avgBs)<1?'No impulse':(avgAs>avgBs?'Bullish impulse':'Bearish impulse');
+          const mp = Math.abs(avgAts-avgBts)<1?'No manipulation':(avgAts>avgBts?'Hiding asks?':'Hiding bids?');
+          const spEl = document.getElementById('spread');
+          const bestB = parseFloat(bids[0]?.[0]||0), bestA = parseFloat(asks[asks.length-1]?.[0]||0);
+          const sp = (bestA-bestB).toFixed(2);
+          spEl.textContent = sp;
+          const ap = parseFloat(sp)>0.5?'Widen spread':'Tighten spread';
+          const mid = ((bestA+bestB)/2).toFixed(2);
+          document.getElementById('mid-price').textContent = mid;
+          document.getElementById('mark-price').textContent = mid;
+          const br = bidSum/askSum;
+          let bl = 'Balanced'; if(br>1.2) bl='Overbought'; else if(br<0.8) bl='Oversold';
 
-            // Averages
-            const avgAs = avg(askSpeedHistory),
-                  avgBs = avg(bidSpeedHistory),
-                  avgAts = avg(askTableSpeedHistory),
-                  avgBts = avg(bidTableSpeedHistory);
+          document.getElementById('insight-liquidity').textContent    = `Liquidity (${historyLength}): ${depthL}`; colorize(document.getElementById('insight-liquidity'), depthL);
+          document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`;    colorize(document.getElementById('insight-demand'), dm);
+          document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${mp}`; colorize(document.getElementById('insight-manipulation'), mp);
+          document.getElementById('insight-timing').textContent       = `Entry Timing (${historyLength}): ${(avgAs<1&&avgBs<1)?'Calm market':'Volatile market'}`; colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
+          document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`; colorize(document.getElementById('insight-adaptive'), ap);
+          document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`;  colorize(document.getElementById('insight-balance'), bl);
 
-            // Labels
-            const depth = askSum + bidSum,
-                  depthL = depth>1000?'High depth':'Low depth',
-                  dm = Math.abs(avgAs-avgBs)<1 ? 'No impulse' : (avgAs>avgBs?'Bullish impulse':'Bearish impulse'),
-                  mp = Math.abs(avgAts-avgBts)<1 ? 'No manipulation' : (avgAts>avgBts?'Hiding asks?':'Hiding bids?'),
-                  sp = parseFloat(document.getElementById('spread').textContent),
-                  ap = sp>0.5?'Widen spread':'Tighten spread',
-                  br = bidSum/askSum,
-                  bl = br>1.2?'Overbought': (br<0.8?'Oversold':'Balanced');
+          document.getElementById('history').textContent =
+            `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
 
-            // Write insights
-            document.getElementById('insight-liquidity').textContent    = `Liquidity (${historyLength}): ${depthL}`; colorize(document.getElementById('insight-liquidity'), depthL);
-            document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`;    colorize(document.getElementById('insight-demand'), dm);
-            document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${mp}`; colorize(document.getElementById('insight-manipulation'), mp);
-            document.getElementById('insight-timing').textContent       = `Entry Timing (${historyLength}): ${(avgAs<1&&avgBs<1)?'Calm market':'Volatile market'}`; colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
-            document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`; colorize(document.getElementById('insight-adaptive'), ap);
-            document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`;  colorize(document.getElementById('insight-balance'), bl);
-
-            // Show history
-            document.getElementById('history').textContent =
-              `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
-
-            // Draw tables
-            renderTable(asks, 'asks-table', true);
-            renderTable(bids, 'bids-table', false);
-
-            // Update spread & prices inline
-            const bestB = parseFloat(bids[0]?.[0]||0),
-                  bestA = parseFloat(asks[asks.length-1]?.[0]||0),
-                  md = ((bestA+bestB)/2).toFixed(2);
-            document.getElementById('spread').textContent    = (bestA-bestB).toFixed(2);
-            document.getElementById('mid-price').textContent = md;
-            document.getElementById('mark-price').textContent= md;
-          });
+          renderTable(asks,'asks-table',true);
+          renderTable(bids,'bids-table',false);
+        });
       }
 
-      // Start
+      // Start updates
       update();
       setInterval(update, 50);
     </script>
