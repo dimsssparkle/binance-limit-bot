@@ -5,44 +5,105 @@
     <title>ETHUSDT Order Book</title>
     <style>
         body { margin: 10px; font-family: Arial, sans-serif; }
-        .wrapper { display: flex; align-items: flex-start; gap: 20px; }
-        table { border-collapse: collapse; font-size: 14px; }
-        /* Asks and Bids tables */
-        #asks-table, #bids-table { width: 300px; }
-        #asks-table td:first-child, #bids-table td:first-child { width: 150px; text-align: left; }
-        #asks-table td:nth-child(2), #bids-table td:nth-child(2) { width: 150px; text-align: right; }
-        #asks-table td, #bids-table td { border: 1px solid #888; padding: 6px; }
-        /* Price table */
-        #price-table { border-collapse: collapse; }
-        #price-table td { border: 1px solid #888; padding: 6px; text-align: center; }
+        h1 { font-size: 16px; margin-bottom: 8px; }
+        table {
+            width: 400px;
+            table-layout: fixed;
+            border-collapse: collapse;
+            font-size: 10px;
+            margin: 0;
+        }
+        th, td {
+            border: 1px solid #888;
+            padding: 2px 4px;
+            text-align: center;
+        }
+        /* Asks/Bids: two equal columns */
+        #asks-table th, #asks-table td,
+        #bids-table th, #bids-table td {
+            width: 50%;
+        }
+        /* Price: three equal columns */
+        #price-table th, #price-table td {
+            width: 33.3333%;
+        }
+        /* Specific cell styles */
         .mid-price { text-align: left; border-top: none; border-bottom: none; }
         .mark-price, .spread { border-top: none; border-bottom: none; }
     </style>
 </head>
 <body>
     <h1>ETHUSDT Order Book</h1>
-    <div class="wrapper">
-        <!-- Asks -->
-        <table id="asks-table">
-            <tbody></tbody>
-        </table>
-        <!-- Price/Spread -->
-        <table id="price-table">
-            <tbody>
-                <tr>
-                    <td id="mid-price" class="mid-price">0.00</td>
-                    <td id="mark-price" class="mark-price">0.00</td>
-                    <td id="spread" class="spread">0.00</td>
-                </tr>
-            </tbody>
-        </table>
-        <!-- Bids -->
-        <table id="bids-table">
-            <tbody></tbody>
-        </table>
-    </div>
+
+    <!-- Asks Table -->
+    <table id="asks-table">
+        <thead>
+            <tr><th>Price</th><th>Qty</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <!-- Mid / Mark / Spread Table -->
+    <table id="price-table">
+        <thead>
+            <tr><th>Mid Price</th><th>Mark Price</th><th>Spread</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td id="mid-price" class="mid-price">0.00</td>
+                <td id="mark-price" class="mark-price">0.00</td>
+                <td id="spread" class="spread">0.00</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Bids Table -->
+    <table id="bids-table">
+        <thead>
+            <tr><th>Price</th><th>Qty</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
 
     <script>
+        // Render order book
+        function renderBook(data) {
+            const asks = (data.asks || []).slice().sort((a, b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
+            const bids = (data.bids || []).slice().sort((a, b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
+
+            const asksBody = document.querySelector('#asks-table tbody');
+            const bidsBody = document.querySelector('#bids-table tbody');
+            asksBody.innerHTML = '';
+            bidsBody.innerHTML = '';
+
+            asks.forEach(([price, qty]) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+                asksBody.appendChild(tr);
+            });
+
+            bids.forEach(([price, qty]) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+                bidsBody.appendChild(tr);
+            });
+
+            updatePrices(asks[0], bids[0]);
+        }
+
+        // Update mid/mark/spread
+        function updatePrices(bestAsk, bestBid) {
+            const askPrice = bestAsk ? parseFloat(bestAsk[0]) : 0;
+            const bidPrice = bestBid ? parseFloat(bestBid[0]) : 0;
+            const mid = ((askPrice + bidPrice) / 2).toFixed(2);
+            const spread = (askPrice - bidPrice).toFixed(2);
+
+            document.getElementById('mid-price').textContent = mid;
+            document.getElementById('mark-price').textContent = mid;
+            document.getElementById('spread').textContent = spread;
+        }
+
+        // Fetch and update
         async function update() {
             try {
                 const resp = await fetch('/api/orderbook');
@@ -53,52 +114,6 @@
             }
         }
 
-        function renderBook(data) {
-            const asks = (data.asks || []).slice().sort((a, b) => b[0] - a[0]).slice(0, 20);
-            const bids = (data.bids || []).slice().sort((a, b) => b[0] - a[0]).slice(0, 20);
-            const asksBody = document.querySelector('#asks-table tbody');
-            const bidsBody = document.querySelector('#bids-table tbody');
-            asksBody.innerHTML = '';
-            bidsBody.innerHTML = '';
-
-            // total quantities for coloring
-            const totalAskQty = asks.reduce((sum, [, q]) => sum + parseFloat(q), 0) || 1;
-            const totalBidQty = bids.reduce((sum, [, q]) => sum + parseFloat(q), 0) || 1;
-
-            asks.forEach(([price, qty]) => {
-                const p = parseFloat(price).toFixed(2);
-                const q = parseFloat(qty).toFixed(6);
-                const intensity = parseFloat(qty) / totalAskQty;
-                const bg = `rgba(255,0,0,${intensity})`;
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${p}</td><td style="background:${bg}">${q}</td>`;
-                asksBody.appendChild(tr);
-            });
-
-            bids.forEach(([price, qty]) => {
-                const p = parseFloat(price).toFixed(2);
-                const q = parseFloat(qty).toFixed(6);
-                const intensity = parseFloat(qty) / totalBidQty;
-                const bg = `rgba(0,128,0,${intensity})`;
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${p}</td><td style="background:${bg}">${q}</td>`;
-                bidsBody.appendChild(tr);
-            });
-
-            updatePrices(asks[0], bids[0]);
-        }
-
-        function updatePrices(bestAsk, bestBid) {
-            const askPrice = bestAsk ? parseFloat(bestAsk[0]) : 0;
-            const bidPrice = bestBid ? parseFloat(bestBid[0]) : 0;
-            const mid = ((askPrice + bidPrice) / 2).toFixed(2);
-            const spread = (askPrice - bidPrice).toFixed(2);
-            document.getElementById('mid-price').textContent = mid;
-            document.getElementById('mark-price').textContent = mid;
-            document.getElementById('spread').textContent = spread;
-        }
-
-        // Запуск с интервалом 100 мс
         update();
         setInterval(update, 100);
     </script>
