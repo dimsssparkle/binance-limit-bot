@@ -19,7 +19,8 @@ EXPOSE 8000
 CMD sh -c "\
     gunicorn \
       --bind 0.0.0.0:8000 \
-      --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker \
+      --worker-class gthread \
+      --threads 4 \
       --timeout 0 \
       app.main:app \
     & \

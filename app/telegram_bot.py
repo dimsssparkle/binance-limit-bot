@@ -1,4 +1,8 @@
 import logging
+
+# Убираем INFO-логирование httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from app.config import settings
