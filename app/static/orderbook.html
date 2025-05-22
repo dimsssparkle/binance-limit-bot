@@ -10,13 +10,12 @@
         table { width: 200px; border-collapse: collapse; font-size: 10px; margin-bottom: 5px; }
         th, td { border: 1px solid #888; padding: 2px; }
         th { background: #ccc; }
-        th:first-child, td:first-child { width: 100px; text-align: left; }
-        th:nth-child(2), td:nth-child(2) { width: 100px; text-align: right; }
-        .asks td:nth-child(2), .bids td:nth-child(2) { transition: background-color 0.1s; }
+        td:first-child { width: 100px; text-align: left; }
+        td:nth-child(2) { width: 100px; text-align: right; }
         .stats table { margin-bottom: 10px; width: 250px; font-size: 10px; }
-        .stats th, .stats td { padding: 2px; }
-        .stats th:first-child, .stats td:first-child { width: 150px; text-align: left; }
-        .stats th:nth-child(2), .stats td:nth-child(2) { width: 100px; text-align: right; }
+        .stats td { padding: 2px; }
+        .stats td:first-child { width: 150px; }
+        .stats td:nth-child(2) { width: 100px; text-align: right; }
         .insights { width: 250px; font-size: 10px; }
         .insights ul { padding-left: 16px; }
         .insights li { margin-bottom: 4px; padding: 2px; border-radius: 3px; }
@@ -24,8 +23,6 @@
         .info { font-size: 10px; margin: 5px 0; text-align: center; }
         .history { width: 450px; font-size: 10px; margin-top: 5px; }
         .history pre { background: #f4f4f4; padding: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
-        h1 { font-size: 14px; margin: 5px 0; text-align: center; }
-        h2 { font-size: 13px; margin: 3px 0; }
     </style>
 </head>
 <body>
@@ -33,23 +30,22 @@
     <div class="wrapper">
       <div class="book">
         <div class="container">
-          <h2>Asks</h2>
+          <!-- Asks Table -->
           <table id="asks-table">
             <tr><th>Price</th><th>Qty</th></tr>
           </table>
+          <!-- Price Info -->
           <div class="info">
             Spread: <span id="spread">0.00</span> |
             Mid Price: <span id="mid-price">0.00</span> |
             Mark Price: <span id="mark-price">0.00</span>
           </div>
-          <h2>Bids</h2>
-          <table id="bids-table">
-            <tr><th>Price</th><th>Qty</th></tr>
-          </table>
+          <!-- Bids Table, no header -->
+          <table id="bids-table"></table>
         </div>
       </div>
       <div class="stats">
-        <h2>Summary</h2>
+        <!-- Summary Metrics -->
         <table>
           <tr><td>Asks Sum</td><td id="asks-sum">0</td></tr>
           <tr><td>Bids Sum</td><td id="bids-sum">0</td></tr>
@@ -58,6 +54,7 @@
           <tr><td>Asks Table Speed</td><td id="asks-table-speed">0</td></tr>
           <tr><td>Bids Table Speed</td><td id="bids-table-speed">0</td></tr>
         </table>
+        <!-- Insights Section -->
         <div class="insights">
           <h2>Insights <span class="insight-period">(last 20 ticks)</span></h2>
           <ul>
@@ -71,6 +68,7 @@
         </div>
       </div>
     </div>
+    <!-- History Window -->
     <div class="history">
       <h2>Last 20 Ticks History (AskSpeed, BidSpeed)</h2>
       <pre id="history"></pre>
@@ -80,92 +78,89 @@
       let askSpeedHistory = [], bidSpeedHistory = [];
       let askTableSpeedHistory = [], bidTableSpeedHistory = [];
 
-      function avg(arr) { return arr.reduce((a,b) => a + b, 0) / (arr.length || 1); }
+      // Utility functions
+      function avg(arr) {
+        return arr.reduce((a, b) => a + b, 0) / (arr.length || 1);
+      }
       function colorize(el, label) {
-        if (label.includes('Bullish') || label.includes('Overbought') || label.includes('High depth')) {
+        if (/Bullish|Overbought|High depth/.test(label)) {
           el.style.background = 'rgba(0,255,0,0.2)';
-        } else if (label.includes('Bearish') || label.includes('Oversold') || label.includes('Low depth')) {
+        } else if (/Bearish|Oversold|Low depth/.test(label)) {
           el.style.background = 'rgba(255,0,0,0.2)';
         } else {
           el.style.background = 'transparent';
         }
       }
 
-      function renderTable(rows, tableId) {
+      // Render order book tables
+      function renderTable(rows, tableId, includeHeader = true) {
         const table = document.getElementById(tableId);
-        table.innerHTML = '<tr><th>Price</th><th>Qty</th></tr>';
+        let html = includeHeader ? '<tr><th>Price</th><th>Qty</th></tr>' : '';
         const maxQty = Math.max(...rows.map(r => parseFloat(r[1])), 0);
         rows.forEach(([price, qty]) => {
           const q = parseFloat(qty);
-          const intensity = maxQty > 0 ? (q / maxQty) : 0;
-          const bgColor = tableId === 'asks-table'
+          const intensity = maxQty ? (q / maxQty) : 0;
+          const bg = tableId === 'asks-table'
             ? `rgba(255,0,0,${intensity})`
             : `rgba(0,128,0,${intensity})`;
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td style="background:${bgColor}">${q.toFixed(6)}</td>`;
-          table.appendChild(tr);
+          html += `<tr><td>${parseFloat(price).toFixed(2)}</td><td style="background:${bg}">${q.toFixed(6)}</td></tr>`;
         });
+        table.innerHTML = html;
       }
 
-      function fetchOrderbook() {
+      // Fetch and process order book data
+      function updateData() {
         const now = performance.now();
         fetch('/api/orderbook')
-          .then(res => res.json())
+          .then(r => r.json())
           .then(data => {
-            const asks = (data.asks || []).sort((a,b) => b[0] - a[0]).slice(0,20);
-            const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
+            // Prepare asks and bids
+            const asks = (data.asks || []).sort((a,b)=>b[0]-a[0]).slice(0,20);
+            const bids = (data.bids || []).sort((a,b)=>b[0]-a[0]).slice(0,20);
 
-            // Calculate sums
+            // Sums
             const askSum = asks.reduce((s, [,q]) => s + parseFloat(q), 0);
             const bidSum = bids.reduce((s, [,q]) => s + parseFloat(q), 0);
             document.getElementById('asks-sum').textContent = askSum.toFixed(6);
             document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
-            // First level speeds
+            // First-level speeds
             let askSpeed = 0;
-            const askQty = parseFloat(asks[0]?.[1] || 0);
-            if (window.lastAskQty !== undefined && askQty < window.lastAskQty) {
-              askSpeed = (window.lastAskQty - askQty) / ((now - window.lastAskTs) / 1000);
+            const currentAskQty = parseFloat(asks[0]?.[1] || 0);
+            if (window.lastAskQty !== undefined && currentAskQty < window.lastAskQty) {
+              askSpeed = (window.lastAskQty - currentAskQty) / ((now - window.lastAskTs)/1000);
               document.getElementById('ask-speed').textContent = askSpeed.toFixed(6);
             }
-            window.lastAskQty = askQty;
-            window.lastAskTs = now;
+            window.lastAskQty = currentAskQty; window.lastAskTs = now;
 
             let bidSpeed = 0;
-            const bidQty = parseFloat(bids[0]?.[1] || 0);
-            if (window.lastBidQty !== undefined && bidQty < window.lastBidQty) {
-              bidSpeed = (window.lastBidQty - bidQty) / ((now - window.lastBidTs) / 1000);
+            const currentBidQty = parseFloat(bids[0]?.[1] || 0);
+            if (window.lastBidQty !== undefined && currentBidQty < window.lastBidQty) {
+              bidSpeed = (window.lastBidQty - currentBidQty) / ((now - window.lastBidTs)/1000);
               document.getElementById('bid-speed').textContent = bidSpeed.toFixed(6);
             }
-            window.lastBidQty = bidQty;
-            window.lastBidTs = now;
+            window.lastBidQty = currentBidQty; window.lastBidTs = now;
 
             // Table sum speeds
             let askTableSpeed = 0;
             if (window.lastAskSum !== undefined && askSum < window.lastAskSum) {
-              askTableSpeed = (window.lastAskSum - askSum) / ((now - window.lastAskSumTs) / 1000);
+              askTableSpeed = (window.lastAskSum - askSum) / ((now - window.lastAskSumTs)/1000);
               document.getElementById('asks-table-speed').textContent = askTableSpeed.toFixed(6);
             }
-            window.lastAskSum = askSum;
-            window.lastAskSumTs = now;
+            window.lastAskSum = askSum; window.lastAskSumTs = now;
 
             let bidTableSpeed = 0;
             if (window.lastBidSum !== undefined && bidSum < window.lastBidSum) {
-              bidTableSpeed = (window.lastBidSum - bidSum) / ((now - window.lastBidSumTs) / 1000);
+              bidTableSpeed = (window.lastBidSum - bidSum) / ((now - window.lastBidSumTs)/1000);
               document.getElementById('bids-table-speed').textContent = bidTableSpeed.toFixed(6);
             }
-            window.lastBidSum = bidSum;
-            window.lastBidSumTs = now;
+            window.lastBidSum = bidSum; window.lastBidSumTs = now;
 
             // Update histories
-            askSpeedHistory.push(askSpeed);
-            bidSpeedHistory.push(bidSpeed);
-            askTableSpeedHistory.push(askTableSpeed);
-            bidTableSpeedHistory.push(bidTableSpeed);
-            if (askSpeedHistory.length > historyLength) askSpeedHistory.shift();
-            if (bidSpeedHistory.length > historyLength) bidSpeedHistory.shift();
-            if (askTableSpeedHistory.length > historyLength) askTableSpeedHistory.shift();
-            if (bidTableSpeedHistory.length > historyLength) bidTableSpeedHistory.shift();
+            askSpeedHistory.push(askSpeed); if (askSpeedHistory.length>historyLength) askSpeedHistory.shift();
+            bidSpeedHistory.push(bidSpeed); if (bidSpeedHistory.length>historyLength) bidSpeedHistory.shift();
+            askTableSpeedHistory.push(askTableSpeed); if (askTableSpeedHistory.length>historyLength) askTableSpeedHistory.shift();
+            bidTableSpeedHistory.push(bidTableSpeed); if (bidTableSpeedHistory.length>historyLength) bidTableSpeedHistory.shift();
 
             // Averages
             const avgAskSpeed = avg(askSpeedHistory);
@@ -173,27 +168,27 @@
             const avgAskTableSpeed = avg(askTableSpeedHistory);
             const avgBidTableSpeed = avg(bidTableSpeedHistory);
 
-            // Insights labels
-            const liq = askSum + bidSum;
-            const liqLabel = liq > 1000 ? 'High depth' : 'Low depth';
-            const demandLabel = avgAskSpeed > avgBidSpeed ? 'Bullish impulse' : 'Bearish impulse';
-            const manipLabel = avgAskTableSpeed > avgBidTableSpeed ? 'Hiding asks?' : 'Hiding bids?';
-            const timingLabel = (avgAskSpeed < 1 && avgBidSpeed < 1) ? 'Calm market' : 'Volatile market';
-            const adaptiveLabel = liq < 500 ? 'Widen spread' : 'Tighten spread';
+            // Metrics
+            const depth = askSum + bidSum;
+            const depthLabel = depth > 1000 ? 'High depth' : 'Low depth';
+            const demandLabel = Math.abs(avgAskSpeed-avgBidSpeed)<1 ? 'No impulse' : (avgAskSpeed>avgBidSpeed ? 'Bullish impulse' : 'Bearish impulse');
+            const manipLabel = Math.abs(avgAskTableSpeed-avgBidTableSpeed)<1 ? 'No manipulation' : (avgAskTableSpeed>avgBidTableSpeed ? 'Hiding asks?' : 'Hiding bids?');
+            const spread = parseFloat(document.getElementById('spread').textContent);
+            const adaptiveLabel = spread > 0.5 ? 'Widen spread' : 'Tighten spread';
             const balanceRatio = bidSum / askSum;
             let balanceLabel = 'Balanced';
-            if (balanceRatio > 1.1) balanceLabel = 'Overbought';
-            else if (balanceRatio < 0.9) balanceLabel = 'Oversold';
+            if (balanceRatio > 1.2) balanceLabel = 'Overbought';
+            else if (balanceRatio < 0.8) balanceLabel = 'Oversold';
 
-            // Update Insights text and color
-            document.getElementById('insight-liquidity').textContent = `Liquidity (${historyLength}): ${liqLabel}`;
-            colorize(document.getElementById('insight-liquidity'), liqLabel);
+            // Update Insights
+            document.getElementById('insight-liquidity').textContent = `Liquidity (${historyLength}): ${depthLabel}`;
+            colorize(document.getElementById('insight-liquidity'), depthLabel);
             document.getElementById('insight-demand').textContent = `Demand Shift (${historyLength}): ${demandLabel}`;
             colorize(document.getElementById('insight-demand'), demandLabel);
             document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${manipLabel}`;
             colorize(document.getElementById('insight-manipulation'), manipLabel);
-            document.getElementById('insight-timing').textContent = `Entry Timing (${historyLength}): ${timingLabel}`;
-            colorize(document.getElementById('insight-timing'), timingLabel);
+            document.getElementById('insight-timing').textContent = `Entry Timing (${historyLength}): ${(avgAskSpeed<1&&avgBidSpeed<1)?'Calm market':'Volatile market'}`;
+            colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
             document.getElementById('insight-adaptive').textContent = `Adaptive Spread (${historyLength}): ${adaptiveLabel}`;
             colorize(document.getElementById('insight-adaptive'), adaptiveLabel);
             document.getElementById('insight-balance').textContent = `Market Balance (${historyLength}): ${balanceLabel}`;
@@ -201,26 +196,35 @@
 
             // Update history display
             document.getElementById('history').textContent =
-              'AskSpeed: ' + askSpeedHistory.map(v => v.toFixed(2)).join(', ') + '\n' +
-              'BidSpeed: ' + bidSpeedHistory.map(v => v.toFixed(2)).join(', ');
-
-            // Spread and price
-            const bestBid = parseFloat(bids[0]?.[0] || 0);
-            const bestAsk = parseFloat(asks[asks.length-1]?.[0] || 0);
-            document.getElementById('spread').textContent = (bestAsk - bestBid).toFixed(2);
-            const midPrice = ((bestAsk + bestBid) / 2).toFixed(2);
-            document.getElementById('mid-price').textContent = midPrice;
-            document.getElementById('mark-price').textContent = midPrice; // placeholder for real mark price
+              'AskSpeed: ' + askSpeedHistory.map(v=>v.toFixed(2)).join(', ') + '\n' +
+              'BidSpeed: ' + bidSpeedHistory.map(v=>v.toFixed(2)).join(', ');
 
             // Render tables
-            renderTable(asks, 'asks-table');
-            renderTable(bids, 'bids-table');
+            renderTable(asks, 'asks-table', true);
+            renderTable(bids, 'bids-table', false);
           });
       }
 
-      // Initial call and interval
-      fetchOrderbook();
-      setInterval(fetchOrderbook, 50);
+      // Update spread, mid and mark price
+      function updatePrices() {
+        fetch('/api/orderbook')
+          .then(r => r.json())
+          .then(data => {
+            const asks = data.asks || [];
+            const bids = data.bids || [];
+            asks.sort((a,b)=>b[0]-a[0]); bids.sort((a,b)=>b[0]-a[0]);
+            const bestBid = parseFloat(bids[0]?.[0] || 0);
+            const bestAsk = parseFloat(asks[asks.length-1]?.[0] || 0);
+            document.getElementById('spread').textContent = (bestAsk - bestBid).toFixed(2);
+            const midP = ((bestAsk + bestBid) / 2).toFixed(2);
+            document.getElementById('mid-price').textContent = midP;
+            document.getElementById('mark-price').textContent = midP; // placeholder
+          });
+      }
+
+      // Initial call and repeated updates
+      fetchOrderbook(); updatePrices();
+      setInterval(() => { fetchOrderbook(); updatePrices(); }, 50);
     </script>
 </body>
 </html>
