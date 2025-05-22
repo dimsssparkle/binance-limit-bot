@@ -11,20 +11,22 @@
         th { background: #ccc; font-size: 0.9em; }
         .asks td { background-color: rgba(255, 0, 0, 0.1); }
         .bids td { background-color: rgba(0, 128, 0, 0.1); }
-        .summary { font-size: 0.9em; margin-bottom: 5px; }
+        .summary { font-size: 0.9em; margin-bottom: 5px; display: flex; justify-content: space-between; }
         h1 { font-size: 1.2em; margin: 5px 0; }
         h2 { font-size: 1em; margin: 5px 0; }
-        #performance { float: right; }
     </style>
 </head>
 <body>
-    <h1>
-      ETHUSDT Order Book (Top 20 Levels)
-      <span id="performance" title="Fetch time and updates per second"></span>
-    </h1>
+    <h1>ETHUSDT Order Book (Top 20 Levels)</h1>
     <div class="summary">
-        <span id="asks-sum">Asks Sum: 0</span> |
-        <span id="bids-sum">Bids Sum: 0</span>
+        <div>
+          <span id="asks-sum">Asks Sum: 0</span> |
+          <span id="bids-sum">Bids Sum: 0</span>
+        </div>
+        <div>
+          <span id="ask-speed">Ask Speed: 0</span> |
+          <span id="bid-speed">Bid Speed: 0</span>
+        </div>
     </div>
     <div class="container">
       <h2>Asks</h2>
@@ -39,9 +41,8 @@
     </div>
 
     <script>
-      let lastFetchTime = Date.now();
-      let lastUpdateTime = Date.now();
-      let updateCount = 0;
+      let lastAskQty = null, askTimestamp = null;
+      let lastBidQty = null, bidTimestamp = null;
 
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
@@ -49,45 +50,56 @@
           rows.forEach(([price, qty]) => {
               const tr = document.createElement('tr');
               tr.className = tableId === 'asks-table' ? 'asks' : 'bids';
-              tr.innerHTML = `<td style="text-align:left; font-size:0.8em">${parseFloat(price).toFixed(2)}</td><td style="font-size:0.8em">${parseFloat(qty).toFixed(6)}</td>`;
+              tr.innerHTML = `<td style="text-align:left; font-size:0.8em">${parseFloat(price).toFixed(2)}</td>` +
+                             `<td style="font-size:0.8em">${parseFloat(qty).toFixed(6)}</td>`;
               table.appendChild(tr);
           });
       }
 
       async function fetchOrderbook() {
-        const fetchStart = performance.now();
         try {
+          const start = performance.now();
           const res = await fetch('/api/orderbook');
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
+
           const asks = (data.asks || []).sort((a,b) => b[0] - a[0]).slice(0,20);
           const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
 
-          renderTable(asks, 'asks-table');
-          renderTable(bids, 'bids-table');
-
+          // compute sums
           const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           document.getElementById('asks-sum').textContent = `Asks Sum: ${askSum.toFixed(6)}`;
           document.getElementById('bids-sum').textContent = `Bids Sum: ${bidSum.toFixed(6)}`;
 
-          const fetchDuration = (performance.now() - fetchStart).toFixed(2);
-          const now = Date.now();
-          updateCount++;
-          const deltaSeconds = (now - lastUpdateTime) / 1000;
-          let freq = '';
-          if (deltaSeconds > 0) {
-            freq = (1 / deltaSeconds).toFixed(1);
+          // compute first-level speed
+          const [askPrice, askQty] = asks[0] || [0,0];
+          const now = performance.now();
+          if (lastAskQty !== null && askQty < lastAskQty) {
+            const deltaQty = lastAskQty - askQty;
+            const deltaTime = (now - askTimestamp) / 1000;
+            const speed = deltaQty / deltaTime;
+            document.getElementById('ask-speed').textContent = `Ask Speed: ${speed.toFixed(6)}`;
           }
-          document.getElementById('performance').textContent = `⏱ ${fetchDuration}ms @ ${freq}Hz`;
-          lastUpdateTime = now;
+          lastAskQty = askQty;
+          askTimestamp = now;
 
+          const [bidPrice, bidQty] = bids[0] || [0,0];
+          if (lastBidQty !== null && bidQty < lastBidQty) {
+            const deltaQtyB = lastBidQty - bidQty;
+            const deltaTimeB = (now - bidTimestamp) / 1000;
+            const speedB = deltaQtyB / deltaTimeB;
+            document.getElementById('bid-speed').textContent = `Bid Speed: ${speedB.toFixed(6)}`;
+          }
+          lastBidQty = bidQty;
+          bidTimestamp = now;
+
+          renderTable(asks, 'asks-table');
+          renderTable(bids, 'bids-table');
         } catch (err) {
           console.error('Fetch orderbook error', err);
         }
       }
 
-      // Первичный вызов и затем каждые 100ms
       fetchOrderbook();
       setInterval(fetchOrderbook, 100);
     </script>
