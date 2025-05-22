@@ -34,17 +34,17 @@
     <div class="wrapper">
       <div class="book">
         <div class="container">
-          <!-- Asks Table (no header) -->
+          <!-- Asks Table -->
           <table id="asks-table"></table>
-          <!-- Price/Spread Table (no header) -->
+          <!-- Price/Spread Table -->
           <table id="price-table">
             <tr>
-              <td id="mid-price">0.00</td>
-              <td id="mark-price">0.00</td>
-              <td id="spread">0.00</td>
+              <td id="mid-price" class="mid-price" style="text-align: left; border-bottom: none; border-top: none;">0.00</td>
+              <td id="mark-price" class="mark-price" style="border-bottom: none; border-top: none;">0.00</td>
+              <td id="spread" class="spread" style="border-bottom: none; border-top: none;">0.00</td>
             </tr>
           </table>
-          <!-- Bids Table (no header) -->
+          <!-- Bids Table -->
           <table id="bids-table"></table>
         </div>
       </div>
@@ -160,11 +160,11 @@
           else if(br<0.8) bl='Oversold';
 
           document.getElementById('insight-liquidity').textContent    = `Liquidity (${historyLength}): ${depthL}`; colorize(document.getElementById('insight-liquidity'), depthL);
-          document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`;       colorize(document.getElementById('insight-demand'), dm);
+          document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`; colorize(document.getElementById('insight-demand'), dm);
           document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${mp}`; colorize(document.getElementById('insight-manipulation'), mp);
           document.getElementById('insight-timing').textContent       = `Entry Timing (${historyLength}): ${(avgAs<1&&avgBs<1)?'Calm market':'Volatile market'}`; colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
-          document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`;    colorize(document.getElementById('insight-adaptive'), ap);
-          document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`;     colorize(document.getElementById('insight-balance'), bl);
+          document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`; colorize(document.getElementById('insight-adaptive'), ap);
+          document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`; colorize(document.getElementById('insight-balance'), bl);
 
           document.getElementById('history').textContent =
             `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
