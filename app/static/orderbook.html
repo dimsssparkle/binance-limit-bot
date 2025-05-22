@@ -31,9 +31,7 @@
       <div class="book">
         <div class="container">
           <!-- Asks Table -->
-          <table id="asks-table">
-            <tr><th>Price</th><th>Qty</th></tr>
-          </table>
+          <table id="asks-table"><tr><th>Price</th><th>Qty</th></tr></table>
           <!-- Price Info -->
           <div class="info">
             Spread: <span id="spread">0.00</span> |
@@ -78,153 +76,123 @@
       let askSpeedHistory = [], bidSpeedHistory = [];
       let askTableSpeedHistory = [], bidTableSpeedHistory = [];
 
-      // Utility functions
-      function avg(arr) {
-        return arr.reduce((a, b) => a + b, 0) / (arr.length || 1);
-      }
-      function colorize(el, label) {
-        if (/Bullish|Overbought|High depth/.test(label)) {
-          el.style.background = 'rgba(0,255,0,0.2)';
-        } else if (/Bearish|Oversold|Low depth/.test(label)) {
-          el.style.background = 'rgba(255,0,0,0.2)';
-        } else {
-          el.style.background = 'transparent';
-        }
+      // Utilities
+      function avg(arr) { return arr.reduce((a,b)=>a+b,0)/(arr.length||1); }
+      function colorize(el, label){
+        if(/Bullish|Overbought|High depth/.test(label)) el.style.background='rgba(0,255,0,0.2)';
+        else if(/Bearish|Oversold|Low depth/.test(label)) el.style.background='rgba(255,0,0,0.2)';
+        else el.style.background='transparent';
       }
 
-      // Render order book tables
-      function renderTable(rows, tableId, includeHeader = true) {
-        const table = document.getElementById(tableId);
-        let html = includeHeader ? '<tr><th>Price</th><th>Qty</th></tr>' : '';
-        const maxQty = Math.max(...rows.map(r => parseFloat(r[1])), 0);
-        rows.forEach(([price, qty]) => {
-          const q = parseFloat(qty);
-          const intensity = maxQty ? (q / maxQty) : 0;
-          const bg = tableId === 'asks-table'
-            ? `rgba(255,0,0,${intensity})`
-            : `rgba(0,128,0,${intensity})`;
-          html += `<tr><td>${parseFloat(price).toFixed(2)}</td><td style="background:${bg}">${q.toFixed(6)}</td></tr>`;
+      // Draw table
+      function renderTable(rows, id, header){
+        const t = document.getElementById(id);
+        let html = header ? '<tr><th>Price</th><th>Qty</th></tr>' : '';
+        const maxQ = Math.max(...rows.map(r=>parseFloat(r[1])),0);
+        rows.forEach(([p,q])=>{
+          const v = parseFloat(q);
+          const i = maxQ ? v/maxQ : 0;
+          const bg = id==='asks-table' ? `rgba(255,0,0,${i})` : `rgba(0,128,0,${i})`;
+          html += `<tr><td>${parseFloat(p).toFixed(2)}</td><td style="background:${bg}">${v.toFixed(6)}</td></tr>`;
         });
-        table.innerHTML = html;
+        t.innerHTML = html;
       }
 
-      // Fetch and process order book data
-      function updateData() {
+      // Single update function
+      function update(){
         const now = performance.now();
         fetch('/api/orderbook')
-          .then(r => r.json())
-          .then(data => {
-            // Prepare asks and bids
-            const asks = (data.asks || []).sort((a,b)=>b[0]-a[0]).slice(0,20);
-            const bids = (data.bids || []).sort((a,b)=>b[0]-a[0]).slice(0,20);
+          .then(r=>r.json())
+          .then(data=>{
+            const asks = (data.asks||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
+            const bids = (data.bids||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
 
             // Sums
-            const askSum = asks.reduce((s, [,q]) => s + parseFloat(q), 0);
-            const bidSum = bids.reduce((s, [,q]) => s + parseFloat(q), 0);
+            const askSum = asks.reduce((s,[,q])=>s+parseFloat(q),0);
+            const bidSum = bids.reduce((s,[,q])=>s+parseFloat(q),0);
             document.getElementById('asks-sum').textContent = askSum.toFixed(6);
             document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
             // First-level speeds
-            let askSpeed = 0;
-            const currentAskQty = parseFloat(asks[0]?.[1] || 0);
-            if (window.lastAskQty !== undefined && currentAskQty < window.lastAskQty) {
-              askSpeed = (window.lastAskQty - currentAskQty) / ((now - window.lastAskTs)/1000);
-              document.getElementById('ask-speed').textContent = askSpeed.toFixed(6);
+            let as=0, bs=0;
+            const qa = parseFloat(asks[0]?.[1]||0);
+            if(window.lqa!==undefined && qa<window.lqa){
+              as = (window.lqa-qa)/((now-window.tqa)/1000);
+              document.getElementById('ask-speed').textContent = as.toFixed(6);
             }
-            window.lastAskQty = currentAskQty; window.lastAskTs = now;
+            window.lqa = qa; window.tqa = now;
 
-            let bidSpeed = 0;
-            const currentBidQty = parseFloat(bids[0]?.[1] || 0);
-            if (window.lastBidQty !== undefined && currentBidQty < window.lastBidQty) {
-              bidSpeed = (window.lastBidQty - currentBidQty) / ((now - window.lastBidTs)/1000);
-              document.getElementById('bid-speed').textContent = bidSpeed.toFixed(6);
+            const qb = parseFloat(bids[0]?.[1]||0);
+            if(window.lqb!==undefined && qb<window.lqb){
+              bs = (window.lqb-qb)/((now-window.tqb)/1000);
+              document.getElementById('bid-speed').textContent = bs.toFixed(6);
             }
-            window.lastBidQty = currentBidQty; window.lastBidTs = now;
+            window.lqb = qb; window.tqb = now;
 
             // Table sum speeds
-            let askTableSpeed = 0;
-            if (window.lastAskSum !== undefined && askSum < window.lastAskSum) {
-              askTableSpeed = (window.lastAskSum - askSum) / ((now - window.lastAskSumTs)/1000);
-              document.getElementById('asks-table-speed').textContent = askTableSpeed.toFixed(6);
+            let ats=0, bts=0;
+            if(window.las!==undefined && askSum<window.las){
+              ats = (window.las-askSum)/((now-window.tas)/1000);
+              document.getElementById('asks-table-speed').textContent = ats.toFixed(6);
             }
-            window.lastAskSum = askSum; window.lastAskSumTs = now;
-
-            let bidTableSpeed = 0;
-            if (window.lastBidSum !== undefined && bidSum < window.lastBidSum) {
-              bidTableSpeed = (window.lastBidSum - bidSum) / ((now - window.lastBidSumTs)/1000);
-              document.getElementById('bids-table-speed').textContent = bidTableSpeed.toFixed(6);
+            window.las = askSum; window.tas = now;
+            if(window.lbs!==undefined && bidSum<window.lbs){
+              bts = (window.lbs-bidSum)/((now-window.tbs)/1000);
+              document.getElementById('bids-table-speed').textContent = bts.toFixed(6);
             }
-            window.lastBidSum = bidSum; window.lastBidSumTs = now;
+            window.lbs = bidSum; window.tbs = now;
 
-            // Update histories
-            askSpeedHistory.push(askSpeed); if (askSpeedHistory.length>historyLength) askSpeedHistory.shift();
-            bidSpeedHistory.push(bidSpeed); if (bidSpeedHistory.length>historyLength) bidSpeedHistory.shift();
-            askTableSpeedHistory.push(askTableSpeed); if (askTableSpeedHistory.length>historyLength) askTableSpeedHistory.shift();
-            bidTableSpeedHistory.push(bidTableSpeed); if (bidTableSpeedHistory.length>historyLength) bidTableSpeedHistory.shift();
+            // Histories
+            askSpeedHistory .push(as); if(askSpeedHistory.length>historyLength) askSpeedHistory.shift();
+            bidSpeedHistory .push(bs); if(bidSpeedHistory.length>historyLength) bidSpeedHistory.shift();
+            askTableSpeedHistory.push(ats); if(askTableSpeedHistory.length>historyLength) askTableSpeedHistory.shift();
+            bidTableSpeedHistory.push(bts); if(bidTableSpeedHistory.length>historyLength) bidTableSpeedHistory.shift();
 
             // Averages
-            const avgAskSpeed = avg(askSpeedHistory);
-            const avgBidSpeed = avg(bidSpeedHistory);
-            const avgAskTableSpeed = avg(askTableSpeedHistory);
-            const avgBidTableSpeed = avg(bidTableSpeedHistory);
+            const avgAs = avg(askSpeedHistory),
+                  avgBs = avg(bidSpeedHistory),
+                  avgAts = avg(askTableSpeedHistory),
+                  avgBts = avg(bidTableSpeedHistory);
 
-            // Metrics
-            const depth = askSum + bidSum;
-            const depthLabel = depth > 1000 ? 'High depth' : 'Low depth';
-            const demandLabel = Math.abs(avgAskSpeed-avgBidSpeed)<1 ? 'No impulse' : (avgAskSpeed>avgBidSpeed ? 'Bullish impulse' : 'Bearish impulse');
-            const manipLabel = Math.abs(avgAskTableSpeed-avgBidTableSpeed)<1 ? 'No manipulation' : (avgAskTableSpeed>avgBidTableSpeed ? 'Hiding asks?' : 'Hiding bids?');
-            const spread = parseFloat(document.getElementById('spread').textContent);
-            const adaptiveLabel = spread > 0.5 ? 'Widen spread' : 'Tighten spread';
-            const balanceRatio = bidSum / askSum;
-            let balanceLabel = 'Balanced';
-            if (balanceRatio > 1.2) balanceLabel = 'Overbought';
-            else if (balanceRatio < 0.8) balanceLabel = 'Oversold';
+            // Labels
+            const depth = askSum + bidSum,
+                  depthL = depth>1000?'High depth':'Low depth',
+                  dm = Math.abs(avgAs-avgBs)<1 ? 'No impulse' : (avgAs>avgBs?'Bullish impulse':'Bearish impulse'),
+                  mp = Math.abs(avgAts-avgBts)<1 ? 'No manipulation' : (avgAts>avgBts?'Hiding asks?':'Hiding bids?'),
+                  sp = parseFloat(document.getElementById('spread').textContent),
+                  ap = sp>0.5?'Widen spread':'Tighten spread',
+                  br = bidSum/askSum,
+                  bl = br>1.2?'Overbought': (br<0.8?'Oversold':'Balanced');
 
-            // Update Insights
-            document.getElementById('insight-liquidity').textContent = `Liquidity (${historyLength}): ${depthLabel}`;
-            colorize(document.getElementById('insight-liquidity'), depthLabel);
-            document.getElementById('insight-demand').textContent = `Demand Shift (${historyLength}): ${demandLabel}`;
-            colorize(document.getElementById('insight-demand'), demandLabel);
-            document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${manipLabel}`;
-            colorize(document.getElementById('insight-manipulation'), manipLabel);
-            document.getElementById('insight-timing').textContent = `Entry Timing (${historyLength}): ${(avgAskSpeed<1&&avgBidSpeed<1)?'Calm market':'Volatile market'}`;
-            colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
-            document.getElementById('insight-adaptive').textContent = `Adaptive Spread (${historyLength}): ${adaptiveLabel}`;
-            colorize(document.getElementById('insight-adaptive'), adaptiveLabel);
-            document.getElementById('insight-balance').textContent = `Market Balance (${historyLength}): ${balanceLabel}`;
-            colorize(document.getElementById('insight-balance'), balanceLabel);
+            // Write insights
+            document.getElementById('insight-liquidity').textContent    = `Liquidity (${historyLength}): ${depthL}`; colorize(document.getElementById('insight-liquidity'), depthL);
+            document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`;    colorize(document.getElementById('insight-demand'), dm);
+            document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${mp}`; colorize(document.getElementById('insight-manipulation'), mp);
+            document.getElementById('insight-timing').textContent       = `Entry Timing (${historyLength}): ${(avgAs<1&&avgBs<1)?'Calm market':'Volatile market'}`; colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
+            document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`; colorize(document.getElementById('insight-adaptive'), ap);
+            document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`;  colorize(document.getElementById('insight-balance'), bl);
 
-            // Update history display
+            // Show history
             document.getElementById('history').textContent =
-              'AskSpeed: ' + askSpeedHistory.map(v=>v.toFixed(2)).join(', ') + '\n' +
-              'BidSpeed: ' + bidSpeedHistory.map(v=>v.toFixed(2)).join(', ');
+              `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
 
-            // Render tables
+            // Draw tables
             renderTable(asks, 'asks-table', true);
             renderTable(bids, 'bids-table', false);
+
+            // Update spread & prices inline
+            const bestB = parseFloat(bids[0]?.[0]||0),
+                  bestA = parseFloat(asks[asks.length-1]?.[0]||0),
+                  md = ((bestA+bestB)/2).toFixed(2);
+            document.getElementById('spread').textContent    = (bestA-bestB).toFixed(2);
+            document.getElementById('mid-price').textContent = md;
+            document.getElementById('mark-price').textContent= md;
           });
       }
 
-      // Update spread, mid and mark price
-      function updatePrices() {
-        fetch('/api/orderbook')
-          .then(r => r.json())
-          .then(data => {
-            const asks = data.asks || [];
-            const bids = data.bids || [];
-            asks.sort((a,b)=>b[0]-a[0]); bids.sort((a,b)=>b[0]-a[0]);
-            const bestBid = parseFloat(bids[0]?.[0] || 0);
-            const bestAsk = parseFloat(asks[asks.length-1]?.[0] || 0);
-            document.getElementById('spread').textContent = (bestAsk - bestBid).toFixed(2);
-            const midP = ((bestAsk + bestBid) / 2).toFixed(2);
-            document.getElementById('mid-price').textContent = midP;
-            document.getElementById('mark-price').textContent = midP; // placeholder
-          });
-      }
-
-      // Initial call and repeated updates
-      fetchOrderbook(); updatePrices();
-      setInterval(() => { fetchOrderbook(); updatePrices(); }, 50);
+      // Start
+      update();
+      setInterval(update, 50);
     </script>
 </body>
 </html>
