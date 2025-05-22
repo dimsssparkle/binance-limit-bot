@@ -69,30 +69,110 @@
     </div>
 
     <script>
-      let lastAskQty = null, askTimestamp = null;
-      let lastBidQty = null, bidTimestamp = null;
-      let lastAskSum = null, askSumTimestamp = null;
-      let lastBidSum = null, bidSumTimestamp = null;
+      // Хранилища истории для скользящих показателей
+      const historyLength = 10;
+      let askSpeedHistory = [], bidSpeedHistory = [];
+      let askTableSpeedHistory = [], bidTableSpeedHistory = [];
 
-      function updateInsights(askSum, bidSum, askSpeed, bidSpeed, askTableSpeed, bidTableSpeed) {
-        const liq = askSum + bidSum;
-        document.getElementById('insight-liquidity').textContent =
-          liq > 1000 ? 'High depth' : 'Low depth';
-        document.getElementById('insight-demand').textContent =
-          askSpeed > bidSpeed ? 'Bullish impulse' : 'Bearish impulse';
-        const manip = askTableSpeed > bidTableSpeed ? 'Hiding asks?' : 'Hiding bids?';
-        document.getElementById('insight-manipulation').textContent = manip;
-        document.getElementById('insight-timing').textContent =
-          askSpeed < 1 && bidSpeed < 1 ? 'Calm market' : 'Volatile market';
-        document.getElementById('insight-adaptive').textContent =
-          liq < 500 ? 'Widen spread' : 'Tighten spread';
+      function avg(arr) { return arr.reduce((a,b) => a+b, 0) / (arr.length || 1); }
+
+      function fetchOrderbook() {
+        const now = performance.now();
+        fetch('/api/orderbook')
+          .then(res => res.json())
+          .then(data => {
+            const asks = (data.asks || []).sort((a,b) => b[0] - a[0]).slice(0,20);
+            const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
+
+            // Суммы
+            const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
+            const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
+            document.getElementById('asks-sum').textContent = askSum.toFixed(6);
+            document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
+
+            // Скорости первого уровня
+            let askSpeed = 0;
+            const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
+            if (window.lastAskQty !== undefined && askQty < window.lastAskQty) {
+              const dQ = window.lastAskQty - askQty;
+              askSpeed = dQ / ((now - window.lastAskTs) / 1000);
+              document.getElementById('ask-speed').textContent = askSpeed.toFixed(6);
+            }
+            window.lastAskQty = askQty;
+            window.lastAskTs = now;
+
+            let bidSpeed = 0;
+            const bidQty = bids[0] ? parseFloat(bids[0][1]) : 0;
+            if (window.lastBidQty !== undefined && bidQty < window.lastBidQty) {
+              const dQB = window.lastBidQty - bidQty;
+              bidSpeed = dQB / ((now - window.lastBidTs) / 1000);
+              document.getElementById('bid-speed').textContent = bidSpeed.toFixed(6);
+            }
+            window.lastBidQty = bidQty;
+            window.lastBidTs = now;
+
+            // Скорости суммы таблицы
+            let askTableSpeed = 0;
+            if (window.lastAskSum !== undefined && askSum < window.lastAskSum) {
+              const dS = window.lastAskSum - askSum;
+              askTableSpeed = dS / ((now - window.lastAskSumTs) / 1000);
+              document.getElementById('asks-table-speed').textContent = askTableSpeed.toFixed(6);
+            }
+            window.lastAskSum = askSum;
+            window.lastAskSumTs = now;
+
+            let bidTableSpeed = 0;
+            if (window.lastBidSum !== undefined && bidSum < window.lastBidSum) {
+              const dSB = window.lastBidSum - bidSum;
+              bidTableSpeed = dSB / ((now - window.lastBidSumTs) / 1000);
+              document.getElementById('bids-table-speed').textContent = bidTableSpeed.toFixed(6);
+            }
+            window.lastBidSum = bidSum;
+            window.lastBidSumTs = now;
+
+            // Статус рынка
+            askSpeedHistory.push(askSpeed);
+            bidSpeedHistory.push(bidSpeed);
+            askTableSpeedHistory.push(askTableSpeed);
+            bidTableSpeedHistory.push(bidTableSpeed);
+            if (askSpeedHistory.length > historyLength) askSpeedHistory.shift();
+            if (bidSpeedHistory.length > historyLength) bidSpeedHistory.shift();
+            if (askTableSpeedHistory.length > historyLength) askTableSpeedHistory.shift();
+            if (bidTableSpeedHistory.length > historyLength) bidTableSpeedHistory.shift();
+
+            const avgAskSpeed = avg(askSpeedHistory);
+            const avgBidSpeed = avg(bidSpeedHistory);
+            const avgAskTableSpeed = avg(askTableSpeedHistory);
+            const avgBidTableSpeed = avg(bidTableSpeedHistory);
+
+            // Обновляем Insights
+            const liq = askSum + bidSum;
+            document.getElementById('insight-liquidity').textContent = liq > 1000 ? 'High depth' : 'Low depth';
+            document.getElementById('insight-demand').textContent = avgAskSpeed > avgBidSpeed ? 'Bullish impulse' : 'Bearish impulse';
+            document.getElementById('insight-manipulation').textContent = avgAskTableSpeed > avgBidTableSpeed ? 'Hiding asks?' : 'Hiding bids?';
+            document.getElementById('insight-timing').textContent = (avgAskSpeed < 1 && avgBidSpeed < 1) ? 'Calm market' : 'Volatile market';
+            document.getElementById('insight-adaptive').textContent = liq < 500 ? 'Widen spread' : 'Tighten spread';
+
+            // Вычисляем Spread, Mid Price и Mark Price
+            const bestAsk = asks[asks.length-1] ? parseFloat(asks[asks.length-1][0]) : 0;
+            const bestBid = bids[0] ? parseFloat(bids[0][0]) : 0;
+            const spread = (bestAsk - bestBid).toFixed(2);
+            const mid = ((bestAsk + bestBid) / 2).toFixed(2);
+            document.getElementById('spread').textContent = spread;
+            document.getElementById('mid-price').textContent = mid;
+
+            // TODO: запросить Mark Price отдельно, если нужен внешний API call
+            document.getElementById('mark-price').textContent = mid; // placeholder
+
+            renderTable(asks, 'asks-table');
+            renderTable(bids, 'bids-table');
+          });
       }
 
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
           table.innerHTML = '<tr><th>Price</th><th>Qty</th></tr>';
-          const quantities = rows.map(r => parseFloat(r[1]));
-          const maxQty = Math.max(...quantities, 0);
+          const maxQty = Math.max(...rows.map(r => parseFloat(r[1])), 0);
           rows.forEach(([price, qty]) => {
               const q = parseFloat(qty);
               const intensity = maxQty > 0 ? (q / maxQty) : 0;
@@ -100,94 +180,14 @@
                 ? `rgba(255,0,0,${intensity})`
                 : `rgba(0,128,0,${intensity})`;
               const tr = document.createElement('tr');
-              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td>` +
-                             `<td style="background:${bg}">${q.toFixed(6)}</td>`;
+              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td style="background:${bg}">${q.toFixed(6)}</td>`;
               table.appendChild(tr);
           });
       }
 
-      async function fetchOrderbook() {
-        try {
-          const now = performance.now();
-          const res = await fetch('/api/orderbook');
-          const data = await res.json();
-
-          const asks = (data.asks || []).sort((a,b) => b[0] - a[0]).slice(0,20);
-          const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
-
-          const bestAsk = parseFloat(asks[0]?.[0] || 0);
-          const bestBid = parseFloat(bids[0]?.[0] || 0);
-          const spread = (bestAsk - bestBid).toFixed(2);
-          const mid = ((bestAsk + bestBid) / 2).toFixed(2);
-          document.getElementById('spread').textContent = spread;
-          document.getElementById('mid-price').textContent = mid;
-
-          // fetch mark price from Binance public API
-          fetch('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT')
-            .then(r => r.json())
-            .then(j => {
-              document.getElementById('mark-price').textContent = parseFloat(j.markPrice).toFixed(2);
-            })
-            .catch(_ => {});
-
-          const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
-          const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
-          document.getElementById('asks-sum').textContent = askSum.toFixed(6);
-          document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
-
-          let askSpeed = 0;
-          const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
-          if (lastAskQty !== null && askQty < lastAskQty) {
-            const deltaQty = lastAskQty - askQty;
-            const deltaTime = (now - askTimestamp) / 1000;
-            askSpeed = deltaQty / deltaTime;
-            document.getElementById('ask-speed').textContent = askSpeed.toFixed(6);
-          }
-          lastAskQty = askQty;
-          askTimestamp = now;
-
-          let bidSpeed = 0;
-          const bidQty = bids[0] ? parseFloat(bids[0][1]) : 0;
-          if (lastBidQty !== null && bidQty < lastBidQty) {
-            const deltaQtyB = lastBidQty - bidQty;
-            const deltaTimeB = (now - bidTimestamp) / 1000;
-            bidSpeed = deltaQtyB / deltaTimeB;
-            document.getElementById('bid-speed').textContent = bidSpeed.toFixed(6);
-          }
-          lastBidQty = bidQty;
-          bidTimestamp = now;
-
-          let askTableSpeed = 0;
-          if (lastAskSum !== null && askSum < lastAskSum) {
-            const deltaSum = lastAskSum - askSum;
-            const dt = (now - askSumTimestamp) / 1000;
-            askTableSpeed = deltaSum / dt;
-            document.getElementById('asks-table-speed').textContent = askTableSpeed.toFixed(6);
-          }
-          lastAskSum = askSum;
-          askSumTimestamp = now;
-
-          let bidTableSpeed = 0;
-          if (lastBidSum !== null && bidSum < lastBidSum) {
-            const deltaSumB = lastBidSum - bidSum;
-            const dtB = (now - bidSumTimestamp) / 1000;
-            bidTableSpeed = deltaSumB / dtB;
-            document.getElementById('bids-table-speed').textContent = bidTableSpeed.toFixed(6);
-          }
-          lastBidSum = bidSum;
-          bidSumTimestamp = now;
-
-          renderTable(asks, 'asks-table');
-          renderTable(bids, 'bids-table');
-
-          updateInsights(askSum, bidSum, askSpeed, bidSpeed, askTableSpeed, bidTableSpeed);
-        } catch (err) {
-          console.error('Fetch orderbook error', err);
-        }
-      }
-
+      // Запуск
       fetchOrderbook();
-      setInterval(fetchOrderbook, 100);
+      setInterval(fetchOrderbook, 1000);
     </script>
 </body>
 </html>
