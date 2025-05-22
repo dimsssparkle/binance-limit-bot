@@ -17,11 +17,12 @@
         .stats th, .stats td { padding: 2px; }
         .stats th:first-child, .stats td:first-child { width: 150px; text-align: left; }
         .stats th:nth-child(2), .stats td:nth-child(2) { width: 100px; text-align: right; }
-        h1 { font-size: 14px; margin: 5px 0; text-align: center; }
-        h2 { font-size: 13px; margin: 3px 0; }
         .insights { width: 250px; font-size: 10px; }
         .insights ul { padding-left: 16px; }
         .insights li { margin-bottom: 4px; }
+        .info { font-size: 10px; margin: 5px 0; text-align: center; }
+        h1 { font-size: 14px; margin: 5px 0; text-align: center; }
+        h2 { font-size: 13px; margin: 3px 0; }
     </style>
 </head>
 <body>
@@ -33,6 +34,11 @@
           <table id="asks-table">
             <tr><th>Price</th><th>Qty</th></tr>
           </table>
+          <div class="info">
+            Spread: <span id="spread">0.00</span> |
+            Mid Price: <span id="mid-price">0.00</span> |
+            Mark Price: <span id="mark-price">0.00</span>
+          </div>
           <h2>Bids</h2>
           <table id="bids-table">
             <tr><th>Price</th><th>Qty</th></tr>
@@ -69,20 +75,15 @@
       let lastBidSum = null, bidSumTimestamp = null;
 
       function updateInsights(askSum, bidSum, askSpeed, bidSpeed, askTableSpeed, bidTableSpeed) {
-        // 1. Liquidity
         const liq = askSum + bidSum;
         document.getElementById('insight-liquidity').textContent =
           liq > 1000 ? 'High depth' : 'Low depth';
-        // 2. Demand Shift
         document.getElementById('insight-demand').textContent =
           askSpeed > bidSpeed ? 'Bullish impulse' : 'Bearish impulse';
-        // 3. Manipulation Signal
         const manip = askTableSpeed > bidTableSpeed ? 'Hiding asks?' : 'Hiding bids?';
         document.getElementById('insight-manipulation').textContent = manip;
-        // 4. Entry Timing
         document.getElementById('insight-timing').textContent =
           askSpeed < 1 && bidSpeed < 1 ? 'Calm market' : 'Volatile market';
-        // 5. Adaptive Spread
         document.getElementById('insight-adaptive').textContent =
           liq < 500 ? 'Widen spread' : 'Tighten spread';
       }
@@ -114,13 +115,28 @@
           const asks = (data.asks || []).sort((a,b) => b[0] - a[0]).slice(0,20);
           const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
 
+          const bestAsk = parseFloat(asks[0]?.[0] || 0);
+          const bestBid = parseFloat(bids[0]?.[0] || 0);
+          const spread = (bestAsk - bestBid).toFixed(2);
+          const mid = ((bestAsk + bestBid) / 2).toFixed(2);
+          document.getElementById('spread').textContent = spread;
+          document.getElementById('mid-price').textContent = mid;
+
+          // fetch mark price from Binance public API
+          fetch('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT')
+            .then(r => r.json())
+            .then(j => {
+              document.getElementById('mark-price').textContent = parseFloat(j.markPrice).toFixed(2);
+            })
+            .catch(_ => {});
+
           const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           document.getElementById('asks-sum').textContent = askSum.toFixed(6);
           document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
-          const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
           let askSpeed = 0;
+          const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
           if (lastAskQty !== null && askQty < lastAskQty) {
             const deltaQty = lastAskQty - askQty;
             const deltaTime = (now - askTimestamp) / 1000;
@@ -130,8 +146,8 @@
           lastAskQty = askQty;
           askTimestamp = now;
 
-          const bidQty = bids[0] ? parseFloat(bids[0][1]) : 0;
           let bidSpeed = 0;
+          const bidQty = bids[0] ? parseFloat(bids[0][1]) : 0;
           if (lastBidQty !== null && bidQty < lastBidQty) {
             const deltaQtyB = lastBidQty - bidQty;
             const deltaTimeB = (now - bidTimestamp) / 1000;
