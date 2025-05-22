@@ -25,9 +25,6 @@
         .insights ul { padding-left: 16px; }
         .insights li { margin-bottom: 4px; padding: 2px; border-radius: 3px; }
         .insight-period { font-weight: bold; }
-        /* History section disabled */
-        /* .history { width: 450px; font-size: 10px; margin-top: 5px; }
-        .history pre { background: #f4f4f4; padding: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; } */
     </style>
 </head>
 <body>
@@ -74,20 +71,16 @@
       </div>
     </div>
     <!-- History Window disabled -->
-    <!-- <div class="history">
-      <h2>Last 20 Ticks History (AskSpeed, BidSpeed)</h2>
-      <pre id="history"></pre>
-    </div> -->
     <script>
-      // --- Пороговые значения (можно настраивать) ---
-      const DEPTH_HIGH = 2000;
-      const DEPTH_LOW  =  500;
-      const SPEED_IMPULSE_THRESHOLD    = 0.5;
-      const MANIPULATION_THRESHOLD     = 0.5;
-      const QUIET_SPEED_THRESHOLD      = 0.2;
-      const SPREAD_THRESHOLD           = 0.5;
-      const BALANCE_OVERBOUGHT_THRESH  = 1.1;
-      const BALANCE_OVERSOLD_THRESH    = 0.9;
+      // --- Пороговые значения (настроены) ---
+      const DEPTH_HIGH                = 2000;
+      const DEPTH_LOW                 = 500;
+      const SPEED_IMPULSE_THRESHOLD   = 0.5;
+      const MANIPULATION_THRESHOLD    = 0.5;
+      const QUIET_SPEED_THRESHOLD     = 0.2;
+      const SPREAD_THRESHOLD          = 0.5;
+      const BALANCE_OVERBOUGHT_THRESH = 1.5;
+      const BALANCE_OVERSOLD_THRESH   = 0.5;
 
       const historyLength = 20;
       let askSpeedHistory = [], bidSpeedHistory = [];
@@ -115,7 +108,7 @@
       function update(){
         const now = performance.now();
         fetch('/api/orderbook').then(r=>r.json()).then(data=>{
-          // --- Сбор данных ---
+          // Данные
           const asks = (data.asks||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
           const bids = (data.bids||[]).sort((a,b)=>b[0]-a[0]).slice(0,20);
           const askSum = asks.reduce((s,[,q])=>s+parseFloat(q),0);
@@ -123,102 +116,78 @@
           document.getElementById('asks-sum').textContent = askSum.toFixed(6);
           document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
-          // --- Скорости изменения глубин ---
-          let as=0, bs=0, ats=0, bts=0;
+          // Скорости изменений (абсолютные)
+          let aspeed = 0, bspeed = 0, atablespeed = 0, btablespeed = 0;
           const qa = parseFloat(asks[0]?.[1]||0);
-          if (window.lqa !== undefined && qa < window.lqa)
-            as = (window.lqa - qa) / ((now - window.tqa)/1000);
+          if (window.lqa !== undefined) aspeed = Math.abs(window.lqa - qa) / ((now - window.tqa)/1000);
           window.lqa = qa; window.tqa = now;
+
           const qb = parseFloat(bids[0]?.[1]||0);
-          if (window.lqb !== undefined && qb < window.lqb)
-            bs = (window.lqb - qb) / ((now - window.tqb)/1000);
+          if (window.lqb !== undefined) bspeed = Math.abs(window.lqb - qb) / ((now - window.tqb)/1000);
           window.lqb = qb; window.tqb = now;
 
-          if (window.las !== undefined && askSum < window.las)
-            ats = (window.las - askSum) / ((now - window.tas)/1000);
+          if (window.las !== undefined) atablespeed = Math.abs(window.las - askSum) / ((now - window.tas)/1000);
           window.las = askSum; window.tas = now;
-          if (window.lbs !== undefined && bidSum < window.lbs)
-            bts = (window.lbs - bidSum) / ((now - window.tbs)/1000);
+
+          if (window.lbs !== undefined) btablespeed = Math.abs(window.lbs - bidSum) / ((now - window.tbs)/1000);
           window.lbs = bidSum; window.tbs = now;
 
-          // --- Истории для усреднения ---
-          // askSpeedHistory.push(as);
-          // if (askSpeedHistory.length > historyLength) askSpeedHistory.shift();
-          // bidSpeedHistory.push(bs);
-          // if (bidSpeedHistory.length > historyLength) bidSpeedHistory.shift();
-          // askTableSpeedHistory.push(ats);
-          // if (askTableSpeedHistory.length > historyLength) askTableSpeedHistory.shift();
-          // bidTableSpeedHistory.push(bts);
-          // if (bidTableSpeedHistory.length > historyLength) bidTableSpeedHistory.shift();
+          document.getElementById('ask-speed').textContent = aspeed.toFixed(6);
+          document.getElementById('bid-speed').textContent = bspeed.toFixed(6);
+          document.getElementById('asks-table-speed').textContent = atablespeed.toFixed(6);
+          document.getElementById('bids-table-speed').textContent = btablespeed.toFixed(6);
 
-          // --- Расчёты средних ---
+          // Продолжаем остальную логику...
           const avgAs = avg(askSpeedHistory), avgBs = avg(bidSpeedHistory);
           const avgAts = avg(askTableSpeedHistory), avgBts = avg(bidTableSpeedHistory);
-
-          // --- Liquidity: High / Medium / Low с учётом Bearish ---
           const totalDepth = askSum + bidSum;
           let depthLabel;
-          if (totalDepth >= DEPTH_HIGH)                depthLabel = 'High depth';
+          if (totalDepth >= DEPTH_HIGH) depthLabel = 'High depth';
           else if (totalDepth <= DEPTH_LOW && avgAs < avgBs) depthLabel = 'Low depth';
-          else                                          depthLabel = 'Medium depth';
+          else depthLabel = 'Medium depth';
           document.getElementById('insight-liquidity').textContent = `Liquidity (${historyLength}): ${depthLabel}`;
           colorize(document.getElementById('insight-liquidity'), depthLabel);
 
-          // --- Demand Shift: No impulse / Bullish / Bearish ---
-          let shiftLabel;
-          if (Math.abs(avgAs - avgBs) < SPEED_IMPULSE_THRESHOLD) shiftLabel = 'No impulse';
-          else shiftLabel = avgAs > avgBs ? 'Bullish impulse' : 'Bearish impulse';
+          let shiftLabel = Math.abs(avgAs-avgBs) < SPEED_IMPULSE_THRESHOLD
+            ? 'No impulse'
+            : (avgAs>avgBs ? 'Bullish impulse' : 'Bearish impulse');
           document.getElementById('insight-demand').textContent = `Demand Shift (${historyLength}): ${shiftLabel}`;
           colorize(document.getElementById('insight-demand'), shiftLabel);
 
-          // --- Manipulation Signal ---
-          let manipLabel;
-          if (Math.abs(avgAts - avgBts) < MANIPULATION_THRESHOLD) manipLabel = 'No manipulation';
-          else manipLabel = avgAts > avgBts ? 'Hiding asks?' : 'Hiding bids?';
+          let manipLabel = Math.abs(avgAts-avgBts) < MANIPULATION_THRESHOLD
+            ? 'No manipulation'
+            : (avgAts>avgBts ? 'Hiding asks?' : 'Hiding bids?');
           document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${manipLabel}`;
           colorize(document.getElementById('insight-manipulation'), manipLabel);
 
-          // --- Entry Timing ---
-          const timingLabel = (avgAs < QUIET_SPEED_THRESHOLD && avgBs < QUIET_SPEED_THRESHOLD)
-                              ? 'Calm market'
-                              : 'Volatile market';
+          const timingLabel = (avgAs<QUIET_SPEED_THRESHOLD && avgBs<QUIET_SPEED_THRESHOLD)
+            ? 'Calm market' : 'Volatile market';
           document.getElementById('insight-timing').textContent = `Entry Timing (${historyLength}): ${timingLabel}`;
           colorize(document.getElementById('insight-timing'), timingLabel);
 
-          // --- Adaptive Spread ---
           const bestB = parseFloat(bids[0]?.[0]||0), bestA = parseFloat(asks[asks.length-1]?.[0]||0);
-          const spread = +(bestA - bestB).toFixed(2);
-          document.getElementById('spread').textContent = spread.toFixed(2);
-          const adaptiveLabel = spread <= SPREAD_THRESHOLD ? 'Tighten spread' : 'Widen spread';
+          const spreadVal = +(bestA-bestB).toFixed(2);
+          document.getElementById('spread').textContent = spreadVal.toFixed(2);
+          const adaptiveLabel = spreadVal <= SPREAD_THRESHOLD ? 'Tighten spread' : 'Widen spread';
           document.getElementById('insight-adaptive').textContent = `Adaptive Spread (${historyLength}): ${adaptiveLabel}`;
           colorize(document.getElementById('insight-adaptive'), adaptiveLabel);
 
-          // --- Market Balance ---
-          const balanceRatio = bidSum / askSum;
-          let balanceLabel;
-          if (balanceRatio > BALANCE_OVERBOUGHT_THRESH) balanceLabel = 'Overbought';
-          else if (balanceRatio < BALANCE_OVERSOLD_THRESH) balanceLabel = 'Oversold';
-          else balanceLabel = 'Balanced';
+          const balanceRatio = bidSum/askSum;
+          let balanceLabel = balanceRatio > BALANCE_OVERBOUGHT_THRESH
+            ? 'Overbought'
+            : (balanceRatio < BALANCE_OVERSOLD_THRESH ? 'Oversold' : 'Balanced');
           document.getElementById('insight-balance').textContent = `Market Balance (${historyLength}): ${balanceLabel}`;
           colorize(document.getElementById('insight-balance'), balanceLabel);
 
-          // --- Mid & Mark Price ---
-          const midPrice = ((bestA + bestB) / 2).toFixed(2);
+          const midPrice = ((bestA+bestB)/2).toFixed(2);
           document.getElementById('mid-price').textContent = midPrice;
           document.getElementById('mark-price').textContent = midPrice;
 
-          // --- История для отображения ---
-          // document.getElementById('history').textContent =
-          //   `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}` +
-          //   `\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
-
-          // --- Рендер таблиц ---
           renderTable(asks, 'asks-table');
           renderTable(bids, 'bids-table');
         });
       }
 
-      // Запуск и интервал
       update();
       setInterval(update, 50);
     </script>
