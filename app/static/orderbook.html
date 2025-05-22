@@ -4,15 +4,16 @@
     <meta charset="UTF-8"/>
     <title>ETHUSDT Order Book (Top 20 Levels)</title>
     <style>
-        body { margin: 10px; font-family: Arial, sans-serif; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 0.9em; }
-        th, td { border: 1px solid #888; padding: 4px; text-align: right; }
-        th { background: #ccc; }
+        body { margin: 5px; font-family: Arial, sans-serif; font-size: 0.8em; }
+        .container { max-height: 85vh; overflow-y: auto; margin-bottom: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 5px; }
+        th, td { border: 1px solid #888; padding: 2px; text-align: right; }
+        th { background: #ccc; font-size: 0.9em; }
         .asks td { background-color: rgba(255, 0, 0, 0.1); }
         .bids td { background-color: rgba(0, 128, 0, 0.1); }
-        .sum-row td { font-weight: bold; background: #eee; }
-        .container { max-height: 80vh; overflow-y: auto; }
-        .summary { font-size: 1em; margin-bottom: 10px; }
+        .summary { font-size: 0.9em; margin-bottom: 5px; }
+        h1 { font-size: 1.2em; margin: 5px 0; }
+        h2 { font-size: 1em; margin: 5px 0; }
     </style>
 </head>
 <body>
@@ -40,7 +41,7 @@
           rows.forEach(([price, qty]) => {
               const tr = document.createElement('tr');
               tr.className = tableId === 'asks-table' ? 'asks' : 'bids';
-              tr.innerHTML = `<td style="text-align:left">${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+              tr.innerHTML = `<td style="text-align:left; font-size:0.8em">${parseFloat(price).toFixed(2)}</td><td style="font-size:0.8em">${parseFloat(qty).toFixed(6)}</td>`;
               table.appendChild(tr);
           });
       }
@@ -56,7 +57,6 @@
           renderTable(asks, 'asks-table');
           renderTable(bids, 'bids-table');
 
-          // compute sums
           const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           document.getElementById('asks-sum').textContent = `Asks Sum: ${askSum.toFixed(6)}`;
