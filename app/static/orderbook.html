@@ -16,20 +16,27 @@
         th, td {
             border: 1px solid #888;
             padding: 2px 4px;
-            text-align: center;
         }
-        /* Asks/Bids: two equal columns */
+        /* First column left-aligned */
+        #asks-table td:first-child, #price-table td:first-child, #bids-table td:first-child {
+            text-align: left;
+        }
+        /* Second column right-aligned for asks/bids */
+        #asks-table td:nth-child(2), #bids-table td:nth-child(2) {
+            text-align: right;
+        }
+        /* Equal widths: asks/bids two columns */
         #asks-table th, #asks-table td,
         #bids-table th, #bids-table td {
             width: 50%;
         }
-        /* Price: three equal columns */
-        #price-table th, #price-table td {
+        /* Equal widths: price table three columns */
+        #price-table td {
             width: 33.3333%;
+            text-align: center;
         }
-        /* Specific cell styles */
-        .mid-price { text-align: left; border-top: none; border-bottom: none; }
-        .mark-price, .spread { border-top: none; border-bottom: none; }
+        /* Remove table header margin */
+        table + table { margin-top: 0; }
     </style>
 </head>
 <body>
@@ -37,73 +44,71 @@
 
     <!-- Asks Table -->
     <table id="asks-table">
-        <thead>
-            <tr><th>Price</th><th>Qty</th></tr>
-        </thead>
         <tbody></tbody>
     </table>
 
-    <!-- Mid / Mark / Spread Table -->
+    <!-- Mid / Mark / Spread without header -->
     <table id="price-table">
-        <thead>
-            <tr><th>Mid Price</th><th>Mark Price</th><th>Spread</th></tr>
-        </thead>
         <tbody>
             <tr>
-                <td id="mid-price" class="mid-price">0.00</td>
-                <td id="mark-price" class="mark-price">0.00</td>
-                <td id="spread" class="spread">0.00</td>
+                <td id="mid-price">0.00</td>
+                <td id="mark-price">0.00</td>
+                <td id="spread">0.00</td>
             </tr>
         </tbody>
     </table>
 
     <!-- Bids Table -->
     <table id="bids-table">
-        <thead>
-            <tr><th>Price</th><th>Qty</th></tr>
-        </thead>
         <tbody></tbody>
     </table>
 
     <script>
-        // Render order book
         function renderBook(data) {
-            const asks = (data.asks || []).slice().sort((a, b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
-            const bids = (data.bids || []).slice().sort((a, b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
+            const asks = (data.asks || []).slice().sort((a,b)=>parseFloat(b[0]) - parseFloat(a[0])).slice(0,20);
+            const bids = (data.bids || []).slice().sort((a,b)=>parseFloat(b[0]) - parseFloat(a[0])).slice(0,20);
 
             const asksBody = document.querySelector('#asks-table tbody');
             const bidsBody = document.querySelector('#bids-table tbody');
             asksBody.innerHTML = '';
             bidsBody.innerHTML = '';
 
+            const totalAsk = asks.reduce((sum,[,q])=>sum+parseFloat(q),0);
+            const totalBid = bids.reduce((sum,[,q])=>sum+parseFloat(q),0);
+
             asks.forEach(([price, qty]) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+                const p = parseFloat(price).toFixed(2);
+                const q = parseFloat(qty).toFixed(6);
+                const frac = totalAsk ? parseFloat(qty)/totalAsk : 0;
+                const bg = `rgba(255,0,0,${frac})`;
+                tr.innerHTML = `<td>${p}</td><td style="background:${bg}">${q}</td>`;
                 asksBody.appendChild(tr);
             });
 
             bids.forEach(([price, qty]) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+                const p = parseFloat(price).toFixed(2);
+                const q = parseFloat(qty).toFixed(6);
+                const frac = totalBid ? parseFloat(qty)/totalBid : 0;
+                const bg = `rgba(0,128,0,${frac})`;
+                tr.innerHTML = `<td>${p}</td><td style="background:${bg}">${q}</td>`;
                 bidsBody.appendChild(tr);
             });
 
             updatePrices(asks[0], bids[0]);
         }
 
-        // Update mid/mark/spread
         function updatePrices(bestAsk, bestBid) {
             const askPrice = bestAsk ? parseFloat(bestAsk[0]) : 0;
             const bidPrice = bestBid ? parseFloat(bestBid[0]) : 0;
-            const mid = ((askPrice + bidPrice) / 2).toFixed(2);
+            const mid = ((askPrice + bidPrice)/2).toFixed(2);
             const spread = (askPrice - bidPrice).toFixed(2);
-
             document.getElementById('mid-price').textContent = mid;
             document.getElementById('mark-price').textContent = mid;
             document.getElementById('spread').textContent = spread;
         }
 
-        // Fetch and update
         async function update() {
             try {
                 const resp = await fetch('/api/orderbook');
