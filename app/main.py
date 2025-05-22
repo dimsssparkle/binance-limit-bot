@@ -1,8 +1,3 @@
-"""
-app/main.py
-
-Flask приложение с endpoints /webhook, /debug/files и WebSocket /ws.
-"""
 import logging
 import os
 import json
@@ -25,6 +20,7 @@ STATIC_DIR = os.path.join(os.path.dirname(BASE_DIR), 'app', 'static')
 init_data()
 start_websocket(['ETHUSDT'])
 
+# Логирование
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
@@ -36,8 +32,7 @@ logger.info(f"Data directory initialized at: {DATA_DIR}")
 
 # Инициализация Flask + Sock
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
-# исправленное
-sock = Sock(app)
+sock = Sock(app)  # WebSocket инициализация без лишних аргументов
 
 @app.route("/static/<path:filename>")
 def static_files(filename):
@@ -70,6 +65,7 @@ def debug_files():
 def websocket(ws):
     """
     Отправляем клиенту весь стакан раз в 100ms.
+    (оставляем для совместимости, но клиент теперь использует HTTP-пуллинг)
     """
     logger.info("WebSocket connected")
     try:
@@ -79,6 +75,15 @@ def websocket(ws):
             time.sleep(0.1)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+
+# Новый endpoint для отдачи JSON-стакана по HTTP
+@app.route("/api/orderbook", methods=["GET"])
+def api_orderbook():
+    """
+    Возвращает последний сохранённый стакан для ETHUSDT
+    """
+    book = get_order_book_snapshot("ETHUSDT")
+    return jsonify(book), 200
 
 if __name__ == "__main__":
     cwd = Path().resolve()

@@ -24,41 +24,38 @@
     </table>
 
     <script>
-      const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-      const socket = new WebSocket(protocol + location.host + '/ws');
+      // Функция рисует таблицу из массива rows
+      function renderTable(rows, tableId) {
+          const table = document.getElementById(tableId);
+          table.innerHTML = '<tr><th>Price</th><th>Quantity</th></tr>';
+          const slice = rows.slice(0, 20);
+          slice.forEach(([price, qty]) => {
+              const tr = document.createElement('tr');
+              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+              table.appendChild(tr);
+          });
+      }
 
-      socket.onopen = () => console.log('WS connected');
-      socket.onerror = e => console.error('WebSocket error', e);
+      // Запрос стакана по HTTP и обновление таблиц
+      async function fetchOrderbook() {
+        try {
+          const res = await fetch('/api/orderbook');
+          if (!res.ok) throw new Error(res.statusText);
+          const data = await res.json();
+          const asks = data.asks || [];
+          const bids = data.bids || [];
 
-      socket.onclose = ev => {
-        console.warn('WebSocket closed', ev.code, ev.reason);
-        // попытаться переподключиться через секунду
-        setTimeout(() => location.reload(), 1000);
-      };
-
-    socket.onmessage = event => {
-        const data = JSON.parse(event.data);
-        const asks = data.asks || [];
-        const bids = data.bids || [];
-
-        function renderTable(rows, tableId, reverse=false) {
-            const table = document.getElementById(tableId);
-            // Очищаем все, кроме заголовка
-            table.innerHTML = '<tr><th>Price</th><th>Quantity</th></tr>';
-            const slice = reverse ? rows.slice(0, 20) : rows.slice(0, 20);
-            if (!rows.length) return;
-            slice.forEach(([price, qty]) => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
-                table.appendChild(tr);
-            });
+          // Asks: от самого дорогого вниз
+          renderTable(asks.sort((a,b) => b[0] - a[0]), 'asks-table');
+          // Bids: от самого дорогого вниз
+          renderTable(bids.sort((a,b) => b[0] - a[0]), 'bids-table');
+        } catch (err) {
+          console.error('Fetch orderbook error', err);
         }
+      }
 
-        // Asks: от самого дорогого вниз
-        renderTable(asks.sort((a,b) => b[0] - a[0]), 'asks-table');
-        // Bids: от самого дорогого вниз
-        renderTable(bids.sort((a,b) => b[0] - a[0]), 'bids-table');
-    };
+      // Запускаем опрос раз в 100ms
+      setInterval(fetchOrderbook, 100);
     </script>
 </body>
 </html>
