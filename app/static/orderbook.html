@@ -13,10 +13,12 @@
         th { background: #ccc; }
         th:first-child, td:first-child { width: 100px; text-align: left; }
         th:nth-child(2), td:nth-child(2) { width: 100px; text-align: right; }
-        .asks td { background-color: rgba(255, 0, 0, 0.1); }
-        .bids td { background-color: rgba(0, 128, 0, 0.1); }
-        .stats table { margin-bottom: 3px; }
+        .asks td { /* base color for asks */ }
+        .bids td { /* base color for bids */ }
+        .stats table { margin-bottom: 3px; width: 250px; }
         .stats th, .stats td { font-size: 12px; padding: 2px; }
+        .stats th:first-child, .stats td:first-child { width: 150px; text-align: left; }
+        .stats th:nth-child(2), .stats td:nth-child(2) { width: 100px; text-align: right; }
         h1 { font-size: 14px; margin: 5px 0; text-align: center; }
         h2 { font-size: 13px; margin: 3px 0; }
     </style>
@@ -58,10 +60,18 @@
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
           table.innerHTML = '<tr><th>Price</th><th>Qty</th></tr>';
+          // вычисляем max quantity для интенсивности
+          const qs = rows.map(r => parseFloat(r[1]));
+          const maxQty = Math.max(...qs, 0);
           rows.forEach(([price, qty]) => {
+              const q = parseFloat(qty);
+              const intensity = maxQty > 0 ? (q / maxQty) : 0;
+              const bg = tableId === 'asks-table'
+                ? `rgba(255,0,0,${intensity})`
+                : `rgba(0,128,0,${intensity})`;
               const tr = document.createElement('tr');
-              tr.className = tableId === 'asks-table' ? 'asks' : 'bids';
-              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
+              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td>` +
+                             `<td style="background:${bg}">${q.toFixed(6)}</td>`;
               table.appendChild(tr);
           });
       }
