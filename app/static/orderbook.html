@@ -76,7 +76,7 @@
       const BALANCE_OVERBOUGHT_THRESH = 1.3;
       const BALANCE_OVERSOLD_THRESH   = 0.75;
 
-      const historyLength = 100;
+      const historyLength = 600;
       let askSpeedHistory = [], bidSpeedHistory = [];
       let askTableSpeedHistory = [], bidTableSpeedHistory = [];
 
@@ -218,7 +218,7 @@
       }
 
       update();
-      setInterval(update, 50);
+      setInterval(update, 100);
     </script>
 </body>
 </html>
