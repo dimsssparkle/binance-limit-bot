@@ -14,10 +14,14 @@
         .summary { font-size: 0.9em; margin-bottom: 5px; }
         h1 { font-size: 1.2em; margin: 5px 0; }
         h2 { font-size: 1em; margin: 5px 0; }
+        #performance { float: right; }
     </style>
 </head>
 <body>
-    <h1>ETHUSDT Order Book (Top 20 Levels)</h1>
+    <h1>
+      ETHUSDT Order Book (Top 20 Levels)
+      <span id="performance" title="Fetch time and updates per second"></span>
+    </h1>
     <div class="summary">
         <span id="asks-sum">Asks Sum: 0</span> |
         <span id="bids-sum">Bids Sum: 0</span>
@@ -35,6 +39,10 @@
     </div>
 
     <script>
+      let lastFetchTime = Date.now();
+      let lastUpdateTime = Date.now();
+      let updateCount = 0;
+
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
           table.innerHTML = '<tr><th style="text-align:left">Price</th><th>Quantity</th></tr>';
@@ -47,6 +55,7 @@
       }
 
       async function fetchOrderbook() {
+        const fetchStart = performance.now();
         try {
           const res = await fetch('/api/orderbook');
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -62,11 +71,23 @@
           document.getElementById('asks-sum').textContent = `Asks Sum: ${askSum.toFixed(6)}`;
           document.getElementById('bids-sum').textContent = `Bids Sum: ${bidSum.toFixed(6)}`;
 
+          const fetchDuration = (performance.now() - fetchStart).toFixed(2);
+          const now = Date.now();
+          updateCount++;
+          const deltaSeconds = (now - lastUpdateTime) / 1000;
+          let freq = '';
+          if (deltaSeconds > 0) {
+            freq = (1 / deltaSeconds).toFixed(1);
+          }
+          document.getElementById('performance').textContent = `⏱ ${fetchDuration}ms @ ${freq}Hz`;
+          lastUpdateTime = now;
+
         } catch (err) {
           console.error('Fetch orderbook error', err);
         }
       }
 
+      // Первичный вызов и затем каждые 100ms
       fetchOrderbook();
       setInterval(fetchOrderbook, 100);
     </script>
