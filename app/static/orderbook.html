@@ -21,6 +21,8 @@
         .insights ul { padding-left: 16px; }
         .insights li { margin-bottom: 4px; }
         .info { font-size: 10px; margin: 5px 0; text-align: center; }
+        .history { width: 450px; font-size: 10px; margin-top: 5px; }
+        .history pre { background: #f4f4f4; padding: 5px; max-height: 100px; overflow-y: auto; }
         h1 { font-size: 14px; margin: 5px 0; text-align: center; }
         h2 { font-size: 13px; margin: 3px 0; }
     </style>
@@ -63,14 +65,17 @@
             <li id="insight-manipulation">Manipulation Signal: N/A</li>
             <li id="insight-timing">Entry Timing: N/A</li>
             <li id="insight-adaptive">Adaptive Spread: N/A</li>
+            <li id="insight-balance">Market Balance: N/A</li>
           </ul>
         </div>
       </div>
     </div>
-
+    <div class="history">
+      <h2>Last 20 Ticks History (AskSpeed, BidSpeed)</h2>
+      <pre id="history"></pre>
+    </div>
     <script>
-      // Хранилища истории для скользящих показателей
-      const historyLength = 10;
+      const historyLength = 20;
       let askSpeedHistory = [], bidSpeedHistory = [];
       let askTableSpeedHistory = [], bidTableSpeedHistory = [];
 
@@ -85,37 +90,34 @@
             const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
 
             // Суммы
-            const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
-            const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
+            const askSum = asks.reduce((s,[,q]) => s + parseFloat(q), 0);
+            const bidSum = bids.reduce((s,[,q]) => s + parseFloat(q), 0);
             document.getElementById('asks-sum').textContent = askSum.toFixed(6);
             document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
             // Скорости первого уровня
             let askSpeed = 0;
-            const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
+            const askQty = parseFloat(asks[0]?.[1] || 0);
             if (window.lastAskQty !== undefined && askQty < window.lastAskQty) {
-              const dQ = window.lastAskQty - askQty;
-              askSpeed = dQ / ((now - window.lastAskTs) / 1000);
+              askSpeed = (window.lastAskQty - askQty) / ((now - window.lastAskTs) / 1000);
               document.getElementById('ask-speed').textContent = askSpeed.toFixed(6);
             }
             window.lastAskQty = askQty;
             window.lastAskTs = now;
 
             let bidSpeed = 0;
-            const bidQty = bids[0] ? parseFloat(bids[0][1]) : 0;
+            const bidQty = parseFloat(bids[0]?.[1] || 0);
             if (window.lastBidQty !== undefined && bidQty < window.lastBidQty) {
-              const dQB = window.lastBidQty - bidQty;
-              bidSpeed = dQB / ((now - window.lastBidTs) / 1000);
+              bidSpeed = (window.lastBidQty - bidQty) / ((now - window.lastBidTs) / 1000);
               document.getElementById('bid-speed').textContent = bidSpeed.toFixed(6);
             }
             window.lastBidQty = bidQty;
             window.lastBidTs = now;
 
-            // Скорости суммы таблицы
+            // Скорости сумм таблиц
             let askTableSpeed = 0;
             if (window.lastAskSum !== undefined && askSum < window.lastAskSum) {
-              const dS = window.lastAskSum - askSum;
-              askTableSpeed = dS / ((now - window.lastAskSumTs) / 1000);
+              askTableSpeed = (window.lastAskSum - askSum) / ((now - window.lastAskSumTs) / 1000);
               document.getElementById('asks-table-speed').textContent = askTableSpeed.toFixed(6);
             }
             window.lastAskSum = askSum;
@@ -123,14 +125,13 @@
 
             let bidTableSpeed = 0;
             if (window.lastBidSum !== undefined && bidSum < window.lastBidSum) {
-              const dSB = window.lastBidSum - bidSum;
-              bidTableSpeed = dSB / ((now - window.lastBidSumTs) / 1000);
+              bidTableSpeed = (window.lastBidSum - bidSum) / ((now - window.lastBidSumTs) / 1000);
               document.getElementById('bids-table-speed').textContent = bidTableSpeed.toFixed(6);
             }
             window.lastBidSum = bidSum;
             window.lastBidSumTs = now;
 
-            // Статус рынка
+            // Обновляем истории
             askSpeedHistory.push(askSpeed);
             bidSpeedHistory.push(bidSpeed);
             askTableSpeedHistory.push(askTableSpeed);
@@ -140,12 +141,13 @@
             if (askTableSpeedHistory.length > historyLength) askTableSpeedHistory.shift();
             if (bidTableSpeedHistory.length > historyLength) bidTableSpeedHistory.shift();
 
+            // Усреднённые скорости
             const avgAskSpeed = avg(askSpeedHistory);
             const avgBidSpeed = avg(bidSpeedHistory);
             const avgAskTableSpeed = avg(askTableSpeedHistory);
             const avgBidTableSpeed = avg(bidTableSpeedHistory);
 
-            // Обновляем Insights
+            // Insights
             const liq = askSum + bidSum;
             document.getElementById('insight-liquidity').textContent = liq > 1000 ? 'High depth' : 'Low depth';
             document.getElementById('insight-demand').textContent = avgAskSpeed > avgBidSpeed ? 'Bullish impulse' : 'Bearish impulse';
@@ -153,39 +155,50 @@
             document.getElementById('insight-timing').textContent = (avgAskSpeed < 1 && avgBidSpeed < 1) ? 'Calm market' : 'Volatile market';
             document.getElementById('insight-adaptive').textContent = liq < 500 ? 'Widen spread' : 'Tighten spread';
 
-            // Вычисляем Spread, Mid Price и Mark Price
-            const bestAsk = asks[asks.length-1] ? parseFloat(asks[asks.length-1][0]) : 0;
-            const bestBid = bids[0] ? parseFloat(bids[0][0]) : 0;
+            // Market Balance
+            const balanceRatio = bidSum / askSum;
+            let balanceLabel = 'Balanced';
+            if (balanceRatio > 1.1) balanceLabel = 'Overbought';
+            else if (balanceRatio < 0.9) balanceLabel = 'Oversold';
+            document.getElementById('insight-balance').textContent = balanceLabel;
+
+            // Отображение истории
+            document.getElementById('history').textContent =
+              'AskSpeed: ' + askSpeedHistory.map(v => v.toFixed(2)).join(',') + '\n' +
+              'BidSpeed: ' + bidSpeedHistory.map(v => v.toFixed(2)).join(',');
+
+            // Spread и цены
+            const bestAsk = parseFloat(asks[asks.length - 1]?.[0] || 0);
+            const bestBid = parseFloat(bids[0]?.[0] || 0);
             const spread = (bestAsk - bestBid).toFixed(2);
             const mid = ((bestAsk + bestBid) / 2).toFixed(2);
             document.getElementById('spread').textContent = spread;
             document.getElementById('mid-price').textContent = mid;
-
-            // TODO: запросить Mark Price отдельно, если нужен внешний API call
             document.getElementById('mark-price').textContent = mid; // placeholder
 
+            // Отрисовка таблиц
             renderTable(asks, 'asks-table');
             renderTable(bids, 'bids-table');
           });
       }
 
       function renderTable(rows, tableId) {
-          const table = document.getElementById(tableId);
-          table.innerHTML = '<tr><th>Price</th><th>Qty</th></tr>';
-          const maxQty = Math.max(...rows.map(r => parseFloat(r[1])), 0);
-          rows.forEach(([price, qty]) => {
-              const q = parseFloat(qty);
-              const intensity = maxQty > 0 ? (q / maxQty) : 0;
-              const bg = tableId === 'asks-table'
-                ? `rgba(255,0,0,${intensity})`
-                : `rgba(0,128,0,${intensity})`;
-              const tr = document.createElement('tr');
-              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td style="background:${bg}">${q.toFixed(6)}</td>`;
-              table.appendChild(tr);
-          });
+        const table = document.getElementById(tableId);
+        table.innerHTML = '<tr><th>Price</th><th>Qty</th></tr>';
+        const maxQty = Math.max(...rows.map(r => parseFloat(r[1])), 0);
+        rows.forEach(([price, qty]) => {
+          const q = parseFloat(qty);
+          const intensity = maxQty > 0 ? (q / maxQty) : 0;
+          const bg = tableId === 'asks-table'
+            ? `rgba(255,0,0,${intensity})`
+            : `rgba(0,128,0,${intensity})`;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td style="background:${bg}">${q.toFixed(6)}</td>`;
+          table.appendChild(tr);
+        });
       }
 
-      // Запуск
+      // Запуск обновлений
       fetchOrderbook();
       setInterval(fetchOrderbook, 50);
     </script>
