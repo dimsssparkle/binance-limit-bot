@@ -7,17 +7,16 @@
         body { margin: 5px; font-family: Arial, sans-serif; }
         .wrapper { display: flex; gap: 10px; }
         .container { max-height: 100vh; overflow-y: auto; }
-        table { width: 200px; border-collapse: collapse; font-size: 10px; margin-bottom: 5px; }
+        table { width: 200px; border-collapse: collapse; font-size: 10px; margin-bottom: 0; }
         th, td { border: 1px solid #888; padding: 2px; }
-        th { background: #ccc; }
         /* Asks/Bids table: 2 columns */
-        #asks-table th:first-child, #bids-table td:first-child { width: 100px; text-align: left; }
-        #asks-table th:nth-child(2), #bids-table td:nth-child(2) { width: 100px; text-align: right; }
+        #asks-table td:first-child, #bids-table td:first-child { width: 100px; text-align: left; }
+        #asks-table td:nth-child(2), #bids-table td:nth-child(2) { width: 100px; text-align: right; }
         /* Price table: 3 columns */
-        #price-table th, #price-table td { text-align: center; }
-        #price-table th:first-child, #price-table td:first-child { width: 66px; }
-        #price-table th:nth-child(2), #price-table td:nth-child(2) { width: 66px; }
-        #price-table th:nth-child(3), #price-table td:nth-child(3) { width: 68px; }
+        #price-table td { text-align: center; }
+        #price-table td:nth-child(1) { width: 66px; }
+        #price-table td:nth-child(2) { width: 66px; }
+        #price-table td:nth-child(3) { width: 68px; }
         .stats table { margin-bottom: 10px; width: 250px; font-size: 10px; }
         .stats td { padding: 2px; }
         .stats td:first-child { width: 150px; }
@@ -35,11 +34,10 @@
     <div class="wrapper">
       <div class="book">
         <div class="container">
-          <!-- Asks Table -->
-          <table id="asks-table"><tr><th>Price</th><th>Qty</th></tr></table>
-          <!-- Price/Spread Table -->
+          <!-- Asks Table (no header) -->
+          <table id="asks-table"></table>
+          <!-- Price/Spread Table (no header) -->
           <table id="price-table">
-            <tr><th>Mid Price</th><th>Mark Price</th><th>Spread</th></tr>
             <tr>
               <td id="mid-price">0.00</td>
               <td id="mark-price">0.00</td>
@@ -90,14 +88,13 @@
         else if(/Bearish|Oversold|Low depth/.test(label)) el.style.background='rgba(255,0,0,0.2)';
         else el.style.background='transparent';
       }
-      function renderTable(rows,id,header){
+      function renderTable(rows,id){
         const t = document.getElementById(id);
-        let html = header?'<tr><th>Price</th><th>Qty</th></tr>':'';
+        let html = '';
         const maxQ = Math.max(...rows.map(r=>parseFloat(r[1])),0);
         rows.forEach(([p,q])=>{
-          const v = parseFloat(q);
-          const i = maxQ? v/maxQ : 0;
-          const bg = id==='asks-table'?`rgba(255,0,0,${i})`:`rgba(0,128,0,${i})`;
+          const v = parseFloat(q), i = maxQ ? v/maxQ : 0;
+          const bg = id==='asks-table' ? `rgba(255,0,0,${i})` : `rgba(0,128,0,${i})`;
           html += `<tr><td>${parseFloat(p).toFixed(2)}</td><td style="background:${bg}">${v.toFixed(6)}</td></tr>`;
         });
         t.innerHTML = html;
@@ -144,34 +141,36 @@
           askTableSpeedHistory.push(ats); if(askTableSpeedHistory.length>historyLength) askTableSpeedHistory.shift();
           bidTableSpeedHistory.push(bts); if(bidTableSpeedHistory.length>historyLength) bidTableSpeedHistory.shift();
 
-          const avgAs = avg(askSpeedHistory), avgBs = avg(bidSpeedHistory), avgAts = avg(askTableSpeedHistory), avgBts = avg(bidTableSpeedHistory);
+          const avgAs = avg(askSpeedHistory), avgBs = avg(bidSpeedHistory);
+          const avgAts = avg(askTableSpeedHistory), avgBts = avg(bidTableSpeedHistory);
           const depth = askSum + bidSum;
-          const depthL = depth>1000?'High depth':'Low depth';
-          const dm = Math.abs(avgAs-avgBs)<1?'No impulse':(avgAs>avgBs?'Bullish impulse':'Bearish impulse');
-          const mp = Math.abs(avgAts-avgBts)<1?'No manipulation':(avgAts>avgBts?'Hiding asks?':'Hiding bids?');
-          const spEl = document.getElementById('spread');
+          const depthL = depth>1000 ? 'High depth':'Low depth';
+          const dm = Math.abs(avgAs-avgBs)<1 ? 'No impulse' : (avgAs>avgBs ? 'Bullish impulse' : 'Bearish impulse');
+          const mp = Math.abs(avgAts-avgBts)<1 ? 'No manipulation' : (avgAts>avgBts ? 'Hiding asks?' : 'Hiding bids?');
           const bestB = parseFloat(bids[0]?.[0]||0), bestA = parseFloat(asks[asks.length-1]?.[0]||0);
           const sp = (bestA-bestB).toFixed(2);
-          spEl.textContent = sp;
-          const ap = parseFloat(sp)>0.5?'Widen spread':'Tighten spread';
+          document.getElementById('spread').textContent = sp;
+          const ap = parseFloat(sp)>0.5 ? 'Widen spread':'Tighten spread';
           const mid = ((bestA+bestB)/2).toFixed(2);
           document.getElementById('mid-price').textContent = mid;
           document.getElementById('mark-price').textContent = mid;
           const br = bidSum/askSum;
-          let bl = 'Balanced'; if(br>1.2) bl='Overbought'; else if(br<0.8) bl='Oversold';
+          let bl = 'Balanced';
+          if(br>1.2) bl='Overbought';
+          else if(br<0.8) bl='Oversold';
 
           document.getElementById('insight-liquidity').textContent    = `Liquidity (${historyLength}): ${depthL}`; colorize(document.getElementById('insight-liquidity'), depthL);
-          document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`;    colorize(document.getElementById('insight-demand'), dm);
+          document.getElementById('insight-demand').textContent       = `Demand Shift (${historyLength}): ${dm}`;       colorize(document.getElementById('insight-demand'), dm);
           document.getElementById('insight-manipulation').textContent = `Manipulation Signal (${historyLength}): ${mp}`; colorize(document.getElementById('insight-manipulation'), mp);
           document.getElementById('insight-timing').textContent       = `Entry Timing (${historyLength}): ${(avgAs<1&&avgBs<1)?'Calm market':'Volatile market'}`; colorize(document.getElementById('insight-timing'), document.getElementById('insight-timing').textContent);
-          document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`; colorize(document.getElementById('insight-adaptive'), ap);
-          document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`;  colorize(document.getElementById('insight-balance'), bl);
+          document.getElementById('insight-adaptive').textContent     = `Adaptive Spread (${historyLength}): ${ap}`;    colorize(document.getElementById('insight-adaptive'), ap);
+          document.getElementById('insight-balance').textContent      = `Market Balance (${historyLength}): ${bl}`;     colorize(document.getElementById('insight-balance'), bl);
 
           document.getElementById('history').textContent =
             `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
 
-          renderTable(asks,'asks-table',true);
-          renderTable(bids,'bids-table',false);
+          renderTable(asks,'asks-table');
+          renderTable(bids,'bids-table');
         });
       }
 
