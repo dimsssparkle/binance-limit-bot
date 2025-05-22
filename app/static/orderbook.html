@@ -6,15 +6,16 @@
     <style>
         body { margin: 5px; font-family: Arial, sans-serif; }
         .wrapper { display: flex; gap: 10px; }
-        .book, .stats { width: 200px; }
+        .book, .stats { }
         .container { max-height: 85vh; overflow-y: auto; }
         table { width: 200px; border-collapse: collapse; font-size: 12px; margin-bottom: 5px; }
         th, td { border: 1px solid #888; padding: 2px; }
         th { background: #ccc; }
         th:first-child, td:first-child { width: 100px; text-align: left; }
         th:nth-child(2), td:nth-child(2) { width: 100px; text-align: right; }
-        .asks td { /* base color for asks */ }
-        .bids td { /* base color for bids */ }
+        /* intensity coloring for book quantity cells */
+        .asks td:nth-child(2), .bids td:nth-child(2) { transition: background-color 0.1s; }
+        /* Summary table styling */
         .stats table { margin-bottom: 3px; width: 250px; }
         .stats th, .stats td { font-size: 12px; padding: 2px; }
         .stats th:first-child, .stats td:first-child { width: 150px; text-align: left; }
