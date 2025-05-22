@@ -4,44 +4,49 @@
     <meta charset="UTF-8"/>
     <title>ETHUSDT Order Book (Top 20 Levels)</title>
     <style>
-        body { margin: 5px; font-family: Arial, sans-serif; font-size: 0.8em; display: flex; flex-direction: column; align-items: center; }
-        .summary { font-size: 0.9em; margin-bottom: 5px; display: flex; justify-content: space-between; width: 600px; }
-        .container { max-height: 85vh; overflow-y: auto; margin-bottom: 5px; width: 600px; }
-        table { width: 600px; border-collapse: collapse; margin-bottom: 5px; }
-        th, td { border: 1px solid #888; padding: 2px; text-align: right; }
-        th { background: #ccc; font-size: 0.9em; }
-        th:first-child, td:first-child { width: 300px; text-align: left; }
-        th:nth-child(2), td:nth-child(2) { width: 300px; }
+        body { margin: 5px; font-family: Arial, sans-serif; }
+        .wrapper { display: flex; gap: 10px; }
+        .book, .stats { width: 200px; }
+        .container { max-height: 85vh; overflow-y: auto; }
+        table { width: 200px; border-collapse: collapse; font-size: 12px; margin-bottom: 5px; }
+        th, td { border: 1px solid #888; padding: 2px; }
+        th { background: #ccc; }
+        th:first-child, td:first-child { width: 100px; text-align: left; }
+        th:nth-child(2), td:nth-child(2) { width: 100px; text-align: right; }
         .asks td { background-color: rgba(255, 0, 0, 0.1); }
         .bids td { background-color: rgba(0, 128, 0, 0.1); }
-        h1 { font-size: 1.2em; margin: 5px 0; }
-        h2 { font-size: 1em; margin: 5px 0; }
+        .stats table { margin-bottom: 3px; }
+        .stats th, .stats td { font-size: 12px; padding: 2px; }
+        h1 { font-size: 14px; margin: 5px 0; text-align: center; }
+        h2 { font-size: 13px; margin: 3px 0; }
     </style>
 </head>
 <body>
-    <h1>ETHUSDT Order Book (Top 20 Levels)</h1>
-    <div class="summary">
-        <div>
-          <span id="asks-sum">Asks Sum: 0</span> |
-          <span id="bids-sum">Bids Sum: 0</span>
+    <h1>ETHUSDT Order Book</h1>
+    <div class="wrapper">
+      <div class="book">
+        <div class="container">
+          <h2>Asks</h2>
+          <table id="asks-table">
+            <tr><th>Price</th><th>Qty</th></tr>
+          </table>
+          <h2>Bids</h2>
+          <table id="bids-table">
+            <tr><th>Price</th><th>Qty</th></tr>
+          </table>
         </div>
-        <div>
-          <span id="ask-speed">Ask Speed: 0</span> |
-          <span id="bid-speed">Bid Speed: 0</span> |
-          <span id="asks-table-speed">Asks Table Speed: 0</span> |
-          <span id="bids-table-speed">Bids Table Speed: 0</span>
-        </div>
-    </div>
-    <div class="container">
-      <h2>Asks</h2>
-      <table id="asks-table">
-          <tr><th>Price</th><th>Quantity</th></tr>
-      </table>
-
-      <h2>Bids</h2>
-      <table id="bids-table">
-          <tr><th>Price</th><th>Quantity</th></tr>
-      </table>
+      </div>
+      <div class="stats">
+        <h2>Summary</h2>
+        <table>
+          <tr><td>Asks Sum</td><td id="asks-sum">0</td></tr>
+          <tr><td>Bids Sum</td><td id="bids-sum">0</td></tr>
+          <tr><td>Ask Speed</td><td id="ask-speed">0</td></tr>
+          <tr><td>Bid Speed</td><td id="bid-speed">0</td></tr>
+          <tr><td>Asks Table Speed</td><td id="asks-table-speed">0</td></tr>
+          <tr><td>Bids Table Speed</td><td id="bids-table-speed">0</td></tr>
+        </table>
+      </div>
     </div>
 
     <script>
@@ -52,12 +57,11 @@
 
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
-          table.innerHTML = '<tr><th>Price</th><th>Quantity</th></tr>';
+          table.innerHTML = '<tr><th>Price</th><th>Qty</th></tr>';
           rows.forEach(([price, qty]) => {
               const tr = document.createElement('tr');
               tr.className = tableId === 'asks-table' ? 'asks' : 'bids';
-              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td>` +
-                             `<td>${parseFloat(qty).toFixed(6)}</td>`;
+              tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
               table.appendChild(tr);
           });
       }
@@ -71,19 +75,16 @@
           const asks = (data.asks || []).sort((a,b) => b[0] - a[0]).slice(0,20);
           const bids = (data.bids || []).sort((a,b) => b[0] - a[0]).slice(0,20);
 
-          // sums
           const askSum = asks.reduce((sum, [,q]) => sum + parseFloat(q), 0);
           const bidSum = bids.reduce((sum, [,q]) => sum + parseFloat(q), 0);
-          document.getElementById('asks-sum').textContent = `Asks Sum: ${askSum.toFixed(6)}`;
-          document.getElementById('bids-sum').textContent = `Bids Sum: ${bidSum.toFixed(6)}`;
+          document.getElementById('asks-sum').textContent = askSum.toFixed(6);
+          document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
-          // first-level speed
           const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
           if (lastAskQty !== null && askQty < lastAskQty) {
             const deltaQty = lastAskQty - askQty;
             const deltaTime = (now - askTimestamp) / 1000;
-            const speed = deltaQty / deltaTime;
-            document.getElementById('ask-speed').textContent = `Ask Speed: ${speed.toFixed(6)}`;
+            document.getElementById('ask-speed').textContent = (deltaQty / deltaTime).toFixed(6);
           }
           lastAskQty = askQty;
           askTimestamp = now;
@@ -92,18 +93,15 @@
           if (lastBidQty !== null && bidQty < lastBidQty) {
             const deltaQtyB = lastBidQty - bidQty;
             const deltaTimeB = (now - bidTimestamp) / 1000;
-            const speedB = deltaQtyB / deltaTimeB;
-            document.getElementById('bid-speed').textContent = `Bid Speed: ${speedB.toFixed(6)}`;
+            document.getElementById('bid-speed').textContent = (deltaQtyB / deltaTimeB).toFixed(6);
           }
           lastBidQty = bidQty;
           bidTimestamp = now;
 
-          // table-sum speed
           if (lastAskSum !== null && askSum < lastAskSum) {
             const deltaSum = lastAskSum - askSum;
             const dt = (now - askSumTimestamp) / 1000;
-            const speedSum = deltaSum / dt;
-            document.getElementById('asks-table-speed').textContent = `Asks Table Speed: ${speedSum.toFixed(6)}`;
+            document.getElementById('asks-table-speed').textContent = (deltaSum / dt).toFixed(6);
           }
           lastAskSum = askSum;
           askSumTimestamp = now;
@@ -111,8 +109,7 @@
           if (lastBidSum !== null && bidSum < lastBidSum) {
             const deltaSumB = lastBidSum - bidSum;
             const dtB = (now - bidSumTimestamp) / 1000;
-            const speedSumB = deltaSumB / dtB;
-            document.getElementById('bids-table-speed').textContent = `Bids Table Speed: ${speedSumB.toFixed(6)}`;
+            document.getElementById('bids-table-speed').textContent = (deltaSumB / dtB).toFixed(6);
           }
           lastBidSum = bidSum;
           bidSumTimestamp = now;
