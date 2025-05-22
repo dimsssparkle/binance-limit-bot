@@ -25,8 +25,9 @@
         .insights ul { padding-left: 16px; }
         .insights li { margin-bottom: 4px; padding: 2px; border-radius: 3px; }
         .insight-period { font-weight: bold; }
-        .history { width: 450px; font-size: 10px; margin-top: 5px; }
-        .history pre { background: #f4f4f4; padding: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+        /* History section disabled */
+        /* .history { width: 450px; font-size: 10px; margin-top: 5px; }
+        .history pre { background: #f4f4f4; padding: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; } */
     </style>
 </head>
 <body>
@@ -72,11 +73,11 @@
         </div>
       </div>
     </div>
-    <!-- History Window -->
-    <div class="history">
+    <!-- History Window disabled -->
+    <!-- <div class="history">
       <h2>Last 20 Ticks History (AskSpeed, BidSpeed)</h2>
       <pre id="history"></pre>
-    </div>
+    </div> -->
     <script>
       // --- Пороговые значения (можно настраивать) ---
       const DEPTH_HIGH = 2000;
@@ -141,10 +142,14 @@
           window.lbs = bidSum; window.tbs = now;
 
           // --- Истории для усреднения ---
-          askSpeedHistory.push(as); if (askSpeedHistory.length > historyLength) askSpeedHistory.shift();
-          bidSpeedHistory.push(bs); if (bidSpeedHistory.length > historyLength) bidSpeedHistory.shift();
-          askTableSpeedHistory.push(ats); if (askTableSpeedHistory.length > historyLength) askTableSpeedHistory.shift();
-          bidTableSpeedHistory.push(bts); if (bidTableSpeedHistory.length > historyLength) bidTableSpeedHistory.shift();
+          // askSpeedHistory.push(as);
+          // if (askSpeedHistory.length > historyLength) askSpeedHistory.shift();
+          // bidSpeedHistory.push(bs);
+          // if (bidSpeedHistory.length > historyLength) bidSpeedHistory.shift();
+          // askTableSpeedHistory.push(ats);
+          // if (askTableSpeedHistory.length > historyLength) askTableSpeedHistory.shift();
+          // bidTableSpeedHistory.push(bts);
+          // if (bidTableSpeedHistory.length > historyLength) bidTableSpeedHistory.shift();
 
           // --- Расчёты средних ---
           const avgAs = avg(askSpeedHistory), avgBs = avg(bidSpeedHistory);
@@ -203,9 +208,9 @@
           document.getElementById('mark-price').textContent = midPrice;
 
           // --- История для отображения ---
-          document.getElementById('history').textContent =
-            `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}\n` +
-            `BidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
+          // document.getElementById('history').textContent =
+          //   `AskSpeed: ${askSpeedHistory.map(v=>v.toFixed(2)).join(', ')}` +
+          //   `\nBidSpeed: ${bidSpeedHistory.map(v=>v.toFixed(2)).join(', ')}`;
 
           // --- Рендер таблиц ---
           renderTable(asks, 'asks-table');
