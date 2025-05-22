@@ -9,8 +9,9 @@ from flask_sock import Sock
 
 from app.config import settings
 from app.handlers import handle_signal
-from app.binance_client import init_data
-from app.websocket_manager import start_websocket, get_order_book_snapshot
+from app.binance_client import init_data, _client
+# убираем websocket_manager — будем брать стакан по REST
+# from app.websocket_manager import start_websocket, get_order_book_snapshot
 
 # Настройка директорий
 BASE_DIR = os.path.dirname(__file__)
@@ -18,7 +19,7 @@ STATIC_DIR = os.path.join(os.path.dirname(BASE_DIR), 'app', 'static')
 
 # Запускаем стартовые процессы
 init_data()
-start_websocket(['ETHUSDT'])
+# start_websocket(['ETHUSDT'])  # WebSocket-менеджер больше не используется
 
 # Логирование
 logging.basicConfig(
@@ -64,26 +65,33 @@ def debug_files():
 @sock.route('/ws')
 def websocket(ws):
     """
-    Отправляем клиенту весь стакан раз в 100ms.
-    (оставляем для совместимости, но клиент теперь использует HTTP-пуллинг)
+    Оставлен для совместимости, но клиент теперь использует HTTP-polling.
     """
     logger.info("WebSocket connected")
     try:
         while True:
-            book = get_order_book_snapshot('ETHUSDT')
+            # Можно оставить, но клиент им не пользуется
+            book = {}  # заглушка
             ws.send(json.dumps(book))
             time.sleep(0.1)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
 
-# Новый endpoint для отдачи JSON-стакана по HTTP
 @app.route("/api/orderbook", methods=["GET"])
 def api_orderbook():
     """
-    Возвращает последний сохранённый стакан для ETHUSDT
+    Возвращает топ-20 уровней стакана ETHUSDT через REST-запрос к Binance.
     """
-    book = get_order_book_snapshot("ETHUSDT")
-    return jsonify(book), 200
+    try:
+        resp = _client.futures_order_book(symbol="ETHUSDT", limit=20)
+        data = {
+            "bids": resp.get("bids", []),
+            "asks": resp.get("asks", []),
+        }
+        return jsonify(data), 200
+    except Exception as e:
+        logger.error(f"Failed to fetch order book via REST: {e}")
+        return jsonify({"bids": [], "asks": []}), 500
 
 if __name__ == "__main__":
     cwd = Path().resolve()

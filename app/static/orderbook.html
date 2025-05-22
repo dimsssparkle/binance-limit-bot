@@ -24,12 +24,11 @@
     </table>
 
     <script>
-      // Функция рисует таблицу из массива rows
+      // Рисуем таблицу из массива rows
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
           table.innerHTML = '<tr><th>Price</th><th>Quantity</th></tr>';
-          const slice = rows.slice(0, 20);
-          slice.forEach(([price, qty]) => {
+          rows.forEach(([price, qty]) => {
               const tr = document.createElement('tr');
               tr.innerHTML = `<td>${parseFloat(price).toFixed(2)}</td><td>${parseFloat(qty).toFixed(6)}</td>`;
               table.appendChild(tr);
@@ -40,21 +39,21 @@
       async function fetchOrderbook() {
         try {
           const res = await fetch('/api/orderbook');
-          if (!res.ok) throw new Error(res.statusText);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           const asks = data.asks || [];
           const bids = data.bids || [];
 
-          // Asks: от самого дорогого вниз
+          // Сортируем и рисуем
           renderTable(asks.sort((a,b) => b[0] - a[0]), 'asks-table');
-          // Bids: от самого дорогого вниз
           renderTable(bids.sort((a,b) => b[0] - a[0]), 'bids-table');
         } catch (err) {
           console.error('Fetch orderbook error', err);
         }
       }
 
-      // Запускаем опрос раз в 100ms
+      // Первичный вызов и затем каждые 100ms
+      fetchOrderbook();
       setInterval(fetchOrderbook, 100);
     </script>
 </body>
