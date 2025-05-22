@@ -1,93 +1,106 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8"/>
+    <meta charset="UTF-8" />
     <title>ETHUSDT Order Book</title>
     <style>
-        body { margin: 5px; font-family: Arial, sans-serif; }
-        .wrapper { display: flex; align-items: center; gap: 10px; }
-        .container { max-height: 100vh; overflow-y: auto; }
-        table { width: 200px; border-collapse: collapse; font-size: 12px; }
-        th, td { border: 1px solid #888; padding: 4px; }
-        #asks-table td:first-child, #bids-table td:first-child { width: 100px; text-align: right; }
-        #asks-table td:nth-child(2), #bids-table td:nth-child(2) { width: 100px; text-align: left; }
-        .price-container table { width: 300px; border-collapse: collapse; }
-        .price-container th, .price-container td { text-align: center; padding: 4px; border: 1px solid #888; }
-        /* Styles for mid, mark, spread cells */
-        #mid-price, .mid-price { text-align: left; border-bottom: none; border-top: none; }
-        #mark-price, .mark-price { border-bottom: none; border-top: none; }
-        #spread, .spread { border-bottom: none; border-top: none; }
+        body { margin: 10px; font-family: Arial, sans-serif; }
+        table { width: 400px; border-collapse: collapse; font-size: 14px; margin-bottom: 20px; }
+        th, td { border: 1px solid #888; padding: 6px; text-align: center; }
+        th { background: #f0f0f0; }
+        /* Price table specific */
+        .mid-price { text-align: left; border-top: none; border-bottom: none; }
+        .mark-price, .spread { border-top: none; border-bottom: none; }
     </style>
 </head>
 <body>
     <h1>ETHUSDT Order Book</h1>
-    <div class="wrapper">
-        <div class="container">
-            <!-- Asks -->
-            <table id="asks-table">
-                <thead><tr><th>Price</th><th>Qty</th></tr></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div class="container price-container">
-            <!-- Mid/Mark/Spread -->
-            <table id="price-table">
-                <thead><tr><th>Mid Price</th><th>Mark Price</th><th>Spread</th></tr></thead>
-                <tbody>
-                    <tr>
-                        <td id="mid-price" class="mid-price">0.00</td>
-                        <td id="mark-price" class="mark-price">0.00</td>
-                        <td id="spread" class="spread">0.00</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        <div class="container">
-            <!-- Bids -->
-            <table id="bids-table">
-                <thead><tr><th>Price</th><th>Qty</th></tr></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-    </div>
+
+    <!-- Asks Table -->
+    <table id="asks-table">
+        <thead>
+            <tr><th>Price</th><th>Qty</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <!-- Mid / Mark / Spread Table -->
+    <table id="price-table">
+        <thead>
+            <tr><th>Mid Price</th><th>Mark Price</th><th>Spread</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td id="mid-price" class="mid-price">0.00</td>
+                <td id="mark-price" class="mark-price">0.00</td>
+                <td id="spread" class="spread">0.00</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Bids Table -->
+    <table id="bids-table">
+        <thead>
+            <tr><th>Price</th><th>Qty</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
     <script>
         function renderBook(data) {
-            const asks = data.asks.slice().sort((a,b)=>b[0]-a[0]).slice(0,20);
-            const bids = data.bids.slice().sort((a,b)=>b[0]-a[0]).slice(0,20);
+            const rawAsks = data.asks || [];
+            const rawBids = data.bids || [];
+            const asks = rawAsks.sort((a,b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
+            const bids = rawBids.sort((a,b) => parseFloat(b[0]) - parseFloat(a[0])).slice(0, 20);
+
             const asksBody = document.querySelector('#asks-table tbody');
             const bidsBody = document.querySelector('#bids-table tbody');
             asksBody.innerHTML = '';
             bidsBody.innerHTML = '';
+
             asks.forEach(([price, qty]) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${price.toFixed(2)}</td><td>${qty.toFixed(6)}</td>`;
+                tr.innerHTML = `
+                    <td>${parseFloat(price).toFixed(2)}</td>
+                    <td>${parseFloat(qty).toFixed(6)}</td>
+                `;
                 asksBody.appendChild(tr);
             });
+
             bids.forEach(([price, qty]) => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${price.toFixed(2)}</td><td>${qty.toFixed(6)}</td>`;
+                tr.innerHTML = `
+                    <td>${parseFloat(price).toFixed(2)}</td>
+                    <td>${parseFloat(qty).toFixed(6)}</td>
+                `;
                 bidsBody.appendChild(tr);
             });
+
             updatePrices(asks[0], bids[0]);
         }
+
         function updatePrices(bestAsk, bestBid) {
-            const bidPrice = bestBid ? bestBid[0] : 0;
-            const askPrice = bestAsk ? bestAsk[0] : 0;
+            const askPrice = bestAsk ? parseFloat(bestAsk[0]) : 0;
+            const bidPrice = bestBid ? parseFloat(bestBid[0]) : 0;
             const mid = ((askPrice + bidPrice) / 2).toFixed(2);
             const spread = (askPrice - bidPrice).toFixed(2);
+
             document.getElementById('mid-price').textContent = mid;
             document.getElementById('mark-price').textContent = mid;
             document.getElementById('spread').textContent = spread;
         }
+
         async function update() {
             try {
                 const resp = await fetch('/api/orderbook');
                 const data = await resp.json();
                 renderBook(data);
             } catch (e) {
-                console.error('Failed to fetch order book', e);
+                console.error('Failed to fetch order book:', e);
             }
         }
+
+        // Запуск обновлений каждые 100 мс
         update();
         setInterval(update, 100);
     </script>
