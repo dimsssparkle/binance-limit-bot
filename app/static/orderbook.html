@@ -12,15 +12,16 @@
         th { background: #ccc; }
         th:first-child, td:first-child { width: 100px; text-align: left; }
         th:nth-child(2), td:nth-child(2) { width: 100px; text-align: right; }
-        /* интенсивность цвета по отношению к максимальному объёму в таблице */
         .asks td:nth-child(2), .bids td:nth-child(2) { transition: background-color 0.1s; }
-        /* Summary таблица */
-        .stats table { margin-bottom: 3px; width: 250px; font-size: 10px; }
+        .stats table { margin-bottom: 10px; width: 250px; font-size: 10px; }
         .stats th, .stats td { padding: 2px; }
         .stats th:first-child, .stats td:first-child { width: 150px; text-align: left; }
         .stats th:nth-child(2), .stats td:nth-child(2) { width: 100px; text-align: right; }
         h1 { font-size: 14px; margin: 5px 0; text-align: center; }
         h2 { font-size: 13px; margin: 3px 0; }
+        .insights { width: 250px; font-size: 10px; }
+        .insights ul { padding-left: 16px; }
+        .insights li { margin-bottom: 4px; }
     </style>
 </head>
 <body>
@@ -48,6 +49,16 @@
           <tr><td>Asks Table Speed</td><td id="asks-table-speed">0</td></tr>
           <tr><td>Bids Table Speed</td><td id="bids-table-speed">0</td></tr>
         </table>
+        <div class="insights">
+          <h2>Insights</h2>
+          <ul>
+            <li id="insight-liquidity">Liquidity: N/A</li>
+            <li id="insight-demand">Demand Shift: N/A</li>
+            <li id="insight-manipulation">Manipulation Signal: N/A</li>
+            <li id="insight-timing">Entry Timing: N/A</li>
+            <li id="insight-adaptive">Adaptive Spread: N/A</li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -56,6 +67,25 @@
       let lastBidQty = null, bidTimestamp = null;
       let lastAskSum = null, askSumTimestamp = null;
       let lastBidSum = null, bidSumTimestamp = null;
+
+      function updateInsights(askSum, bidSum, askSpeed, bidSpeed, askTableSpeed, bidTableSpeed) {
+        // 1. Liquidity
+        const liq = askSum + bidSum;
+        document.getElementById('insight-liquidity').textContent =
+          liq > 1000 ? 'High depth' : 'Low depth';
+        // 2. Demand Shift
+        document.getElementById('insight-demand').textContent =
+          askSpeed > bidSpeed ? 'Bullish impulse' : 'Bearish impulse';
+        // 3. Manipulation Signal
+        const manip = askTableSpeed > bidTableSpeed ? 'Hiding asks?' : 'Hiding bids?';
+        document.getElementById('insight-manipulation').textContent = manip;
+        // 4. Entry Timing
+        document.getElementById('insight-timing').textContent =
+          askSpeed < 1 && bidSpeed < 1 ? 'Calm market' : 'Volatile market';
+        // 5. Adaptive Spread
+        document.getElementById('insight-adaptive').textContent =
+          liq < 500 ? 'Widen spread' : 'Tighten spread';
+      }
 
       function renderTable(rows, tableId) {
           const table = document.getElementById(tableId);
@@ -90,41 +120,51 @@
           document.getElementById('bids-sum').textContent = bidSum.toFixed(6);
 
           const askQty = asks[0] ? parseFloat(asks[0][1]) : 0;
+          let askSpeed = 0;
           if (lastAskQty !== null && askQty < lastAskQty) {
             const deltaQty = lastAskQty - askQty;
             const deltaTime = (now - askTimestamp) / 1000;
-            document.getElementById('ask-speed').textContent = (deltaQty / deltaTime).toFixed(6);
+            askSpeed = deltaQty / deltaTime;
+            document.getElementById('ask-speed').textContent = askSpeed.toFixed(6);
           }
           lastAskQty = askQty;
           askTimestamp = now;
 
           const bidQty = bids[0] ? parseFloat(bids[0][1]) : 0;
+          let bidSpeed = 0;
           if (lastBidQty !== null && bidQty < lastBidQty) {
             const deltaQtyB = lastBidQty - bidQty;
             const deltaTimeB = (now - bidTimestamp) / 1000;
-            document.getElementById('bid-speed').textContent = (deltaQtyB / deltaTimeB).toFixed(6);
+            bidSpeed = deltaQtyB / deltaTimeB;
+            document.getElementById('bid-speed').textContent = bidSpeed.toFixed(6);
           }
           lastBidQty = bidQty;
           bidTimestamp = now;
 
+          let askTableSpeed = 0;
           if (lastAskSum !== null && askSum < lastAskSum) {
             const deltaSum = lastAskSum - askSum;
             const dt = (now - askSumTimestamp) / 1000;
-            document.getElementById('asks-table-speed').textContent = (deltaSum / dt).toFixed(6);
+            askTableSpeed = deltaSum / dt;
+            document.getElementById('asks-table-speed').textContent = askTableSpeed.toFixed(6);
           }
           lastAskSum = askSum;
           askSumTimestamp = now;
 
+          let bidTableSpeed = 0;
           if (lastBidSum !== null && bidSum < lastBidSum) {
             const deltaSumB = lastBidSum - bidSum;
             const dtB = (now - bidSumTimestamp) / 1000;
-            document.getElementById('bids-table-speed').textContent = (deltaSumB / dtB).toFixed(6);
+            bidTableSpeed = deltaSumB / dtB;
+            document.getElementById('bids-table-speed').textContent = bidTableSpeed.toFixed(6);
           }
           lastBidSum = bidSum;
           bidSumTimestamp = now;
 
           renderTable(asks, 'asks-table');
           renderTable(bids, 'bids-table');
+
+          updateInsights(askSum, bidSum, askSpeed, bidSpeed, askTableSpeed, bidTableSpeed);
         } catch (err) {
           console.error('Fetch orderbook error', err);
         }
