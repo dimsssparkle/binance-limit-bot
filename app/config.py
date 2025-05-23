@@ -9,10 +9,8 @@ class Settings:
     binance_api_secret: str = os.environ["BINANCE_API_SECRET"]
     webhook_secret: str = os.environ["WEBHOOK_SECRET"]
 
-    # Telegram
     telegram_token: str    = os.environ["TELEGRAM_TOKEN"]
 
-    # Торговые символы и параметры
     symbols: list[str]     = os.environ.get("SYMBOLS", "ETHUSDT,BTCUSDT").split(",")
     default_symbol: str    = os.environ.get("DEFAULT_SYMBOL", symbols[0])
     default_quantity: float= float(os.environ.get("DEFAULT_QUANTITY", "0.01"))

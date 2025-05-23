@@ -1,10 +1,3 @@
-# File: app/handlers.py
-"""
-app/handlers.py
-
-Обработка сигналов: открытие и закрытие позиций с mutex для предотвращения дублирования.
-Без инициализации файлов.
-"""
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
 from app.binance_client import (
@@ -14,7 +7,6 @@ from app.binance_client import (
 from threading import Lock
 from collections import defaultdict
 
-# Мьютексы по символам для синхронизации запросов
 symbol_locks: dict[str, Lock] = defaultdict(Lock)
 
 class Signal(BaseModel):

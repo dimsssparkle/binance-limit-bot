@@ -1,9 +1,3 @@
-# File: app/binance_client.py
-"""
-app/binance_client.py
-
-Обёртка над Binance Futures API без записи на диск.
-"""
 import math
 import time
 import logging
@@ -16,12 +10,10 @@ from app.websocket_manager import latest_book
 logger = logging.getLogger(__name__)
 logger.setLevel(settings.log_level)
 
-# Инициализация Binance-клиента
 _client = Client(settings.binance_api_key, settings.binance_api_secret)
 
 
 def get_price_filter(symbol: str) -> dict:
-    """Возвращает PRICE_FILTER для символа."""
     info = _client.futures_exchange_info()
     for s in info["symbols"]:
         if s["symbol"] == symbol:
@@ -38,7 +30,6 @@ def cancel_open_orders(symbol: str, side: str = None) -> None:
 
 
 def get_current_book(symbol: str) -> dict:
-    """Возвращает лучшие bid/ask из WebSocket или REST."""
     book = latest_book.get(symbol)
     if book:
         return book
@@ -47,9 +38,6 @@ def get_current_book(symbol: str) -> dict:
 
 
 def wait_for_fill(symbol: str, order_id: int, timeout: float = 20.0, poll_interval: float = 0.5) -> None:
-    """
-    Ожидает заполнения (FILLED/PARTIALLY_FILLED) лимитного ордера.
-    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         o = _client.futures_get_order(symbol=symbol, orderId=order_id)
@@ -69,9 +57,6 @@ def place_post_only_with_retries(
     retry_interval: float = 1,
     max_attempts: int = 10
 ) -> dict:
-    """
-    Выставляет post-only лимитный ордер с ретраем, без логирования на диск.
-    """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
     initial_pos = get_position_amount(symbol)
@@ -147,7 +132,6 @@ def place_post_only_with_retries(
 
 
 def get_position_amount(symbol: str) -> float:
-    """Возвращает текущий размер позиции без записи в файл."""
     positions = _client.futures_position_information()
     for p in positions:
         if p['symbol'] == symbol:

@@ -1,7 +1,3 @@
-# File: app/main.py
-"""
-Основной модуль Flask-приложения без WebSocket-ендпоинтов и операций с диском.
-"""
 import logging
 import os
 import json
@@ -13,7 +9,6 @@ from app.config import settings
 from app.handlers import handle_signal
 from app.binance_client import _client
 
-# Логирование
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s %(levelname)s %(name)s %(message)s'

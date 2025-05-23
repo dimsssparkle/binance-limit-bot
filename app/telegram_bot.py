@@ -1,6 +1,5 @@
 import logging
 
-# Убираем INFO-логирование httpx
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from telegram import Update
@@ -15,21 +14,19 @@ from app.binance_client import (
 )
 from threading import Lock
 
-# Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO)
 )
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
-# Control for webhooks processing
+
 webhook_lock = Lock()
 webhook_paused = False
 
-# In-memory store for leverage per symbol
 leverage_map = {}
 
-# /pause and /resume commands
+
 def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global webhook_paused
     webhook_paused = True
@@ -40,7 +37,6 @@ def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     webhook_paused = False
     return update.message.reply_text("Webhooks processing resumed.")
 
-# Util for summing commission by side
 def is_entry_trade(t, is_entry):
     return (t.get('buyer') is True) is is_entry
 
@@ -61,7 +57,6 @@ async def sum_commission(symbol: str, amt: float, is_entry: bool) -> float:
                 break
     return comm
 
-# /active_trade - detailed open positions
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     positions = _client.futures_position_information()
     messages = []
@@ -102,7 +97,6 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n\n".join(messages) or "No active positions."
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
-# /create_order - open new position and output summary
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) < 4 or len(args) > 5:
@@ -173,14 +167,12 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
 
-# /close_trades - close all open positions with summary
 async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for sym in settings.symbols:
         amt = get_position_amount(sym)
         if not amt:
             continue
 
-        # Close position
         side = 'SELL' if amt > 0 else 'BUY'
         cancel_open_orders(sym)
         order = place_post_only_with_retries(sym, side, abs(amt))
@@ -195,17 +187,14 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
         leverage = leverage_map.get(sym, 1)
         margin_used = abs(amt * entry_price) / leverage if leverage else 0.0
 
-        # Commissions
         entry_comm = await sum_commission(sym, amt, is_entry=True)
         exit_comm = await sum_commission(sym, amt, is_entry=False)
         total_commission = entry_comm + exit_comm
 
-        # PnL
         pnl_gross = (exit_price - entry_price) * amt
         pnl_net = pnl_gross - entry_comm - exit_comm
         total_pnl = pnl_net + total_commission
 
-        # Fetch USDT balance
         balances = _client.futures_account_balance()
         usdt_balance = next((float(a['balance']) for a in balances if a['asset'] == 'USDT'), 0.0)
 
@@ -222,13 +211,11 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
 
-# /close_orders - cancel all open orders
 async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for sym in settings.symbols:
         cancel_open_orders(sym)
     await context.bot.send_message(chat_id=update.effective_chat.id, text="All open orders cancelled.")
 
-# /balance - futures account balance
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _client.futures_account_balance()
     lines = [f"{a['asset']}: {a['balance']}" for a in account]
@@ -236,7 +223,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 if __name__ == '__main__':
-    # Правильная инициализация HTTPXRequest без connection_pool_limits:
     request = HTTPXRequest(
         connect_timeout=5.0,   # сек — время на установку TCP-соединения
         read_timeout=30.0,     # сек — время ожидания данных
@@ -249,7 +235,6 @@ if __name__ == '__main__':
         .request(request)   # передаём сюда
         .build()
     )
-    # Регистрируем все ваши CommandHandler’ы
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('resume', resume))
