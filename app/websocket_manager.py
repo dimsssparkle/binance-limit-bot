@@ -49,25 +49,25 @@ def _on_depth_update(msg):
     logger.debug(f"Depth update {symbol}: bids={len(bids)}, asks={len(asks)}")
 
 
-def start_websocket(symbols: list[str]):
-    """
-    Запускает поток WebSocket для передачи depth20@100ms по списку символов.
-    """
-    def runner():
-        _twm.start()
-        for s in symbols:
-            logger.info(f"Subscribing to futures depth socket for {s}")
-            # подписка на 20 уровней глубины с интервалом 100ms
-            _twm.start_depth_socket(
-                callback=_on_depth_update,
-                symbol=s,
-                depth=20,
-                interval=100
-            )
-        _twm.join()
+# def start_websocket(symbols: list[str]):
+#     """
+#     Запускает поток WebSocket для передачи depth20@100ms по списку символов.
+#     """
+#     def runner():
+#         _twm.start()
+#         for s in symbols:
+#             logger.info(f"Subscribing to futures depth socket for {s}")
+#             # подписка на 20 уровней глубины с интервалом 100ms
+#             _twm.start_depth_socket(
+#                 callback=_on_depth_update,
+#                 symbol=s,
+#                 depth=20,
+#                 interval=100
+#             )
+#         _twm.join()
 
-    thread = Thread(target=runner, daemon=True)
-    thread.start()
+#     thread = Thread(target=runner, daemon=True)
+#     thread.start()
 
 
 def get_order_book_snapshot(symbol: str = 'ETHUSDT') -> dict:

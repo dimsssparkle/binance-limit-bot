@@ -62,20 +62,20 @@ def debug_files():
         logger.error(f"Error reading data dir: {e}")
         return jsonify({"error": str(e)}), 500
 
-@sock.route('/ws')
-def websocket(ws):
-    """
-    Оставлен для совместимости, но клиент теперь использует HTTP-polling.
-    """
-    logger.info("WebSocket connected")
-    try:
-        while True:
-            # Можно оставить, но клиент им не пользуется
-            book = {}  # заглушка
-            ws.send(json.dumps(book))
-            time.sleep(0.1)
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+# @sock.route('/ws')
+# def websocket(ws):
+#     """
+#     Оставлен для совместимости, но клиент теперь использует HTTP-polling.
+#     """
+#     logger.info("WebSocket connected")
+#     try:
+#         while True:
+#             # Можно оставить, но клиент им не пользуется
+#             book = {}  # заглушка
+#             ws.send(json.dumps(book))
+#             time.sleep(0.1)
+#     except Exception as e:
+#         logger.error(f"WebSocket error: {e}")
 
 @app.route("/api/orderbook", methods=["GET"])
 def api_orderbook():
