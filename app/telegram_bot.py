@@ -236,26 +236,21 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 if __name__ == '__main__':
-    # 1) Создаём HTTPXRequest с нужными таймаутами и повторами:
+    # Правильная инициализация HTTPXRequest без connection_pool_limits:
     request = HTTPXRequest(
-        # Пулы соединений
-        connection_pool_limits={'max_keepalive_connections': 5, 'max_connections': 10},
-        # Общий timeout на каждый HTTP-запрос
-        timeout=60.0,
-        # timeout на чтение тела ответа
-        read_timeout=30.0,
-        # timeout на запись (если отправляете файлы и т.п.)
-        write_timeout=30.0,
-        # кол-во автоматических повторов при сетевых ошибках
-        retries=5
+        connect_timeout=5.0,   # сек — время на установку TCP-соединения
+        read_timeout=30.0,     # сек — время ожидания данных
+        write_timeout=30.0,    # сек — время на отправку данных (если отправляете файлы)
+        pool_timeout=60.0      # сек — время ожидания доступного соединения из пула
     )
-    # 2) Передаём его в билдер:
     app = (
         ApplicationBuilder()
         .token(settings.telegram_token)
-        .request(request)        # <-- вот сюда
+        .request(request)   # передаём сюда
         .build()
     )
+    # Регистрируем все ваши CommandHandler’ы
+    app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('resume', resume))
     app.add_handler(CommandHandler('balance', balance))
