@@ -224,15 +224,15 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     request = HTTPXRequest(
-        connect_timeout=5.0,   # сек — время на установку TCP-соединения
-        read_timeout=30.0,     # сек — время ожидания данных
-        write_timeout=30.0,    # сек — время на отправку данных (если отправляете файлы)
-        pool_timeout=60.0      # сек — время ожидания доступного соединения из пула
+        connect_timeout=5.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=60.0
     )
     app = (
         ApplicationBuilder()
         .token(settings.telegram_token)
-        .request(request)   # передаём сюда
+        .request(request)
         .build()
     )
     app.add_handler(CommandHandler('pause', pause))

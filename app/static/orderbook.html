@@ -17,39 +17,32 @@
             border: 1px solid #888;
             padding: 2px 4px;
         }
-        /* First column left-aligned */
         #asks-table td:first-child, #price-table td:first-child, #bids-table td:first-child {
             text-align: left;
         }
-        /* Second column right-aligned for asks/bids */
         #asks-table td:nth-child(2), #bids-table td:nth-child(2) {
             text-align: right;
         }
-        /* Equal widths: asks/bids two columns */
         #asks-table th, #asks-table td,
         #bids-table th, #bids-table td {
             width: 50%;
         }
-        /* Equal widths: price table three columns, No top/bottom borders*/
         #price-table td {
             width: 33.3333%;
             text-align: center;
             border-bottom: none;
             border-top: none;
         }
-        /* Remove table header margin */
         table + table { margin-top: 0; }
     </style>
 </head>
 <body>
     <h1>ETHUSDT Order Book</h1>
 
-    <!-- Asks Table -->
     <table id="asks-table">
         <tbody></tbody>
     </table>
 
-    <!-- Mid / Mark / Spread without header -->
     <table id="price-table">
         <tbody>
             <tr>
@@ -60,7 +53,6 @@
         </tbody>
     </table>
 
-    <!-- Bids Table -->
     <table id="bids-table">
         <tbody></tbody>
     </table>

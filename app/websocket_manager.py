@@ -10,7 +10,6 @@ _order_books: dict[str, dict] = {}
 
 latest_book = _order_books
 
-# Инициализация менеджера с ключами API
 _twm = ThreadedWebsocketManager(
     api_key=settings.binance_api_key,
     api_secret=settings.binance_api_secret
