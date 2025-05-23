@@ -1,15 +1,11 @@
-# app/telegram_bot.py
+# File: app/telegram_bot.py
 
 import logging
 import asyncio
 from threading import Lock
 
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
 
 from app.config import settings
@@ -23,12 +19,9 @@ from app.binance_client import (
 # Отключаем подробные логи httpx
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Базовая настройка логов
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
+# Настройка логирования для этого модуля
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Состояния бота
 webhook_lock = Lock()
@@ -36,7 +29,7 @@ webhook_paused = False
 
 # Хранилища данных о плечах и сделках
 leverage_map: dict[str, int] = {}
-trade_records: dict[str, list[dict]] = {}  # symbol -> список записей {"orderId","qty","price","commission"}
+trade_records: dict[str, list[dict]] = {}  # symbol -> list of {"orderId","qty","price","commission"}
 
 
 def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -52,9 +45,6 @@ def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /create_order <SYMBOL> <BUY|SELL> <AMOUNT> <LEVERAGE> [PRICE]
-    """
     args = context.args
     if len(args) < 4 or len(args) > 5:
         return await update.message.reply_text(
@@ -62,19 +52,21 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     symbol = args[0].upper()
-    side   = args[1].upper()  # BUY or SELL
+    side   = args[1].upper()
     qty    = float(args[2])
     lev    = int(args[3])
     price  = float(args[4]) if len(args) == 5 else None
 
-    # Закрываем противоположную позицию, если есть
-    signed_qty    = qty if side == "BUY" else -qty
-    existing_amt  = get_position_amount(symbol)
+    # Закрываем противоположную позицию
+    signed_qty   = qty if side == "BUY" else -qty
+    existing_amt = get_position_amount(symbol)
     if existing_amt and existing_amt * signed_qty < 0:
         cancel_open_orders(symbol)
         opp_side = "SELL" if existing_amt > 0 else "BUY"
         close_ord = place_post_only_with_retries(symbol, opp_side, abs(existing_amt))
-        await update.message.reply_text(f"Closed existing position: order_id={close_ord['orderId']}")
+        await update.message.reply_text(
+            f"Closed existing position: order_id={close_ord['orderId']}"
+        )
 
     # Устанавливаем плечо
     leverage_map[symbol] = lev
@@ -84,7 +76,7 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Leverage set failed: {e}")
 
-    # Ставим новый ордер
+    # Ставим ордер
     if price is not None:
         order = _client.futures_create_order(
             symbol=symbol,
@@ -99,25 +91,32 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = order["orderId"]
 
-    # Ждём секунду, чтобы трейды появились в истории
+    # Ждём, чтобы сделки появились в истории
     await asyncio.sleep(1)
 
-    # Получаем только трейды этого ордера
-    all_trades = _client.futures_account_trades(symbol=symbol)
+    # Получаем трейды этого ордера
+    all_trades   = _client.futures_account_trades(symbol=symbol)
     entry_trades = [t for t in all_trades if t["orderId"] == order_id]
 
-    total_qty = sum(abs(float(t["qty"])) for t in entry_trades)
+    total_qty   = sum(abs(float(t["qty"])) for t in entry_trades)
     entry_price = (
         sum(float(t["price"]) * abs(float(t["qty"])) for t in entry_trades) / total_qty
         if total_qty else 0.0
     )
-    entry_comm = sum(
+    entry_comm  = sum(
         float(t["commission"])
         for t in entry_trades
         if t.get("commissionAsset") == "USDT"
     )
 
-    # Записываем в историю
+    # DEBUG: raw fills and calculations
+    logger.debug(f"[DEBUG {symbol}] entry_trades for {order_id}: {entry_trades!r}")
+    logger.debug(
+        f"[DEBUG {symbol}] total_qty={total_qty}, "
+        f"entry_price={entry_price:.8f}, entry_comm={entry_comm:.8f}"
+    )
+
+    # Сохраняем запись
     trade_records.setdefault(symbol, []).append({
         "orderId":   order_id,
         "qty":       signed_qty,
@@ -125,11 +124,10 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "commission": entry_comm
     })
 
-    # Берём маржу и ликвидацию из позиции
-    pos_info = _client.futures_position_information(symbol=symbol)
-    pos = next(x for x in pos_info if x["symbol"] == symbol)
-    margin_used   = float(pos.get("initialMargin", 0.0))
-    liq_price     = float(pos.get("liquidationPrice", 0.0))
+    # Маржа и ликвидация
+    pos = next(x for x in _client.futures_position_information(symbol=symbol) if x["symbol"] == symbol)
+    margin_used = float(pos.get("initialMargin", 0.0))
+    liq_price   = float(pos.get("liquidationPrice", 0.0))
 
     # Баланс USDT
     usdt_balance = next(
@@ -152,18 +150,13 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /active_trade — показывает текущие открытые позиции
-    """
-    msgs = []
     positions = _client.futures_position_information()
+    msgs = []
     for p in positions:
         amt = float(p.get("positionAmt", 0))
         if not amt:
             continue
         sym = p["symbol"]
-
-        # Объединяем все входные записи для этого символа
         recs = trade_records.get(sym, [])
         total_in_qty = sum(abs(r["qty"]) for r in recs)
         entry_price = (
@@ -193,49 +186,50 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Комиссия входа: {entry_comm:.8f}\n"
             f"PNL нетто: {pnl_net:.8f}"
         )
-
     await update.message.reply_text("\n\n".join(msgs) or "No active positions.")
 
 
 async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /close_trades — закрыть все открытые позиции и показать PnL
-    """
-    for sym, recs in list(trade_records.items()):
-        amt = get_position_amount(sym)
+    for symbol, recs in list(trade_records.items()):
+        amt = get_position_amount(symbol)
         if not amt:
             continue
 
         side = "SELL" if amt > 0 else "BUY"
-        cancel_open_orders(sym)
-        order = place_post_only_with_retries(sym, side, abs(amt))
+        cancel_open_orders(symbol)
+        order = place_post_only_with_retries(symbol, side, abs(amt))
         close_id = order["orderId"]
 
         await asyncio.sleep(1)
-        all_trades = _client.futures_account_trades(symbol=sym)
+        all_trades  = _client.futures_account_trades(symbol=symbol)
         exit_trades = [t for t in all_trades if t["orderId"] == close_id]
 
         total_exit_qty = sum(abs(float(t["qty"])) for t in exit_trades)
-        exit_price = (
+        exit_price     = (
             sum(float(t["price"]) * abs(float(t["qty"])) for t in exit_trades) / total_exit_qty
             if total_exit_qty else 0.0
         )
-        exit_comm = sum(
+        exit_comm      = sum(
             float(t["commission"])
             for t in exit_trades
             if t.get("commissionAsset") == "USDT"
         )
 
-        # Агрегируем входные данные
+        # DEBUG: raw exit fills and calculations
+        logger.debug(f"[DEBUG {symbol}] exit_trades for {close_id}: {exit_trades!r}")
+        logger.debug(
+            f"[DEBUG {symbol}] total_exit_qty={total_exit_qty}, "
+            f"exit_price={exit_price:.8f}, exit_comm={exit_comm:.8f}"
+        )
+
         total_in_qty = sum(abs(r["qty"]) for r in recs)
-        entry_price = (
+        entry_price  = (
             sum(r["price"] * abs(r["qty"]) for r in recs) / total_in_qty
             if total_in_qty else 0.0
         )
-        entry_comm = sum(r["commission"] for r in recs)
-
-        total_comm = entry_comm + exit_comm
-        pnl = (exit_price - entry_price) * amt - total_comm
+        entry_comm   = sum(r["commission"] for r in recs)
+        total_comm   = entry_comm + exit_comm
+        pnl          = (exit_price - entry_price) * amt - total_comm
 
         usdt_balance = next(
             (float(a["balance"]) for a in _client.futures_account_balance() if a["asset"] == "USDT"),
@@ -243,7 +237,7 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await update.message.reply_text(
-            f"Символ: {sym}\n"
+            f"Символ: {symbol}\n"
             f"Направление: {side}\n"
             f"Количество: {amt}\n"
             f"Цена входа: {entry_price}\n"
@@ -252,30 +246,21 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Реализованный PnL: {pnl:.8f}\n"
             f"Futures USDT баланс: {usdt_balance:.8f}"
         )
-
-        # очищаем историю по этому символу
-        trade_records.pop(sym, None)
+        trade_records.pop(symbol, None)
 
 
 async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /close_orders — отменить все открытые ордера
-    """
     for sym in settings.symbols:
         cancel_open_orders(sym)
     await update.message.reply_text("All open orders cancelled.")
 
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /balance — показать фьючерсный баланс
-    """
     lines = [f"{a['asset']}: {a['balance']}" for a in _client.futures_account_balance()]
     await update.message.reply_text("\n".join(lines) or "No balance data.")
 
 
 if __name__ == "__main__":
-    # Настраиваем HTTP-клиент для polling
     request = HTTPXRequest(
         connect_timeout=5.0,
         read_timeout=30.0,
@@ -289,7 +274,6 @@ if __name__ == "__main__":
         .build()
     )
 
-    # Регистрируем команды
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
     app.add_handler(CommandHandler("create_order", create_order))
