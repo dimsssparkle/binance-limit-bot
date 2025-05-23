@@ -1,10 +1,17 @@
 # app/telegram_bot.py
 
 import logging
+import asyncio
 from threading import Lock
+
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes
+)
 from telegram.request import HTTPXRequest
+
 from app.config import settings
 from app.binance_client import (
     get_position_amount,
@@ -12,25 +19,24 @@ from app.binance_client import (
     place_post_only_with_retries,
     _client,
 )
-from typing import Dict, Any
 
-# Убираем излишние логи httpx
+# Отключаем подробные логи httpx
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Общая настройка логирования
+# Базовая настройка логов
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Состояние бота
+# Состояния бота
 webhook_lock = Lock()
 webhook_paused = False
 
-# Хранилища плеча и данных по сделке
-leverage_map: Dict[str, int] = {}
-trade_records: Dict[str, Dict[str, Any]] = {}
+# Хранилища данных о плечах и сделках
+leverage_map: dict[str, int] = {}
+trade_records: dict[str, list[dict]] = {}  # symbol -> список записей {"orderId","qty","price","commission"}
 
 
 def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,134 +51,85 @@ def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return update.message.reply_text("Webhooks processing resumed.")
 
 
-def is_entry_trade(fill: dict, is_entry: bool) -> bool:
-    # fill['buyer']==True для входных (BUY), False для выходных (SELL)
-    return (fill.get("buyer") is True) is is_entry
-
-
-async def sum_commission_from_fills(fills: list[dict]) -> float:
-    """Суммирует USDT-комиссию из списка fills."""
-    return sum(
-        float(f["commission"])
-        for f in fills
-        if f.get("commissionAsset") == "USDT"
-    )
-
-
-async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    positions = _client.futures_position_information()
-    messages = []
-    for p in positions:
-        amt = float(p.get("positionAmt", 0))
-        if amt == 0:
-            continue
-        sym = p["symbol"]
-        side = "LONG" if amt > 0 else "SHORT"
-        # Берём данные позиции
-        info = _client.futures_position_information(symbol=sym)
-        pos = next(x for x in info if x["symbol"] == sym)
-        entry_price   = float(pos.get("entryPrice", 0.0))
-        margin_used   = float(pos.get("initialMargin", 0.0))
-        liq_price     = float(pos.get("liquidationPrice", 0.0))
-        mark_price    = float(_client.futures_mark_price(symbol=sym)["markPrice"])
-        pnl_gross     = (mark_price - entry_price) * amt
-        entry_comm    = await sum_commission_from_fills(
-                            _client.futures_get_order_trades(symbol=sym, orderId=pos["entryOrderId"])
-                        ) if "entryOrderId" in pos else 0.0
-        exit_comm     = 0.0  # при активной позиции выход ещё не сделан
-        pnl_net       = pnl_gross - entry_comm - exit_comm
-        lev           = leverage_map.get(sym, int(pos.get("leverage", 1)))
-
-        msg = (
-            f"Символ: {sym}\n"
-            f"Направление: {side}\n"
-            f"Количество: {amt}\n"
-            f"Цена входа: {entry_price}\n"
-            f"Плечо: {lev}\n"
-            f"Использованная маржа: {margin_used:.8f}\n"
-            f"Цена ликвидации: {liq_price}\n"
-            f"PNL брутто: {pnl_gross:.8f}\n"
-            f"Комиссия входа: {entry_comm:.8f}\n"
-            f"Комиссия выхода: {exit_comm:.8f}\n"
-            f"PNL нетто: {pnl_net:.8f}"
-        )
-        messages.append(msg)
-
-    text = "\n\n".join(messages) or "No active positions."
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
-
-
 async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /create_order <SYMBOL> <BUY|SELL> <AMOUNT> <LEVERAGE> [PRICE]
+    """
     args = context.args
     if len(args) < 4 or len(args) > 5:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="Usage: /create_order <SYMBOL> <BUY|SELL> <AMOUNT> <LEVERAGE> [PRICE]"
+        return await update.message.reply_text(
+            "Usage: /create_order <SYMBOL> <BUY|SELL> <AMOUNT> <LEVERAGE> [PRICE]"
         )
-        return
 
-    sym      = args[0].upper()
-    side     = args[1].upper()
-    amt      = float(args[2])
-    leverage = int(args[3])
-    price    = float(args[4]) if len(args) == 5 else None
+    symbol = args[0].upper()
+    side   = args[1].upper()  # BUY or SELL
+    qty    = float(args[2])
+    lev    = int(args[3])
+    price  = float(args[4]) if len(args) == 5 else None
 
     # Закрываем противоположную позицию, если есть
-    signed_amt   = amt if side == "BUY" else -amt
-    existing_amt = get_position_amount(sym)
-    if existing_amt and existing_amt * signed_amt < 0:
-        cancel_open_orders(sym)
-        close_order = place_post_only_with_retries(sym,
-                                                   "SELL" if existing_amt > 0 else "BUY",
-                                                   abs(existing_amt))
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"Closed existing position: order_id={close_order['orderId']}"
-        )
+    signed_qty    = qty if side == "BUY" else -qty
+    existing_amt  = get_position_amount(symbol)
+    if existing_amt and existing_amt * signed_qty < 0:
+        cancel_open_orders(symbol)
+        opp_side = "SELL" if existing_amt > 0 else "BUY"
+        close_ord = place_post_only_with_retries(symbol, opp_side, abs(existing_amt))
+        await update.message.reply_text(f"Closed existing position: order_id={close_ord['orderId']}")
 
     # Устанавливаем плечо
-    leverage_map[sym] = leverage
-    cancel_open_orders(sym)
+    leverage_map[symbol] = lev
+    cancel_open_orders(symbol)
     try:
-        _client.futures_change_leverage(symbol=sym, leverage=leverage)
+        _client.futures_change_leverage(symbol=symbol, leverage=lev)
     except Exception as e:
-        logger.warning(f"Leverage change failed: {e}")
+        logger.warning(f"Leverage set failed: {e}")
 
-    # Ставим ордер
+    # Ставим новый ордер
     if price is not None:
         order = _client.futures_create_order(
-            symbol=sym,
+            symbol=symbol,
             side=side,
             type="LIMIT",
             timeInForce="GTC",
             price=f"{price:.8f}",
-            quantity=str(amt),
+            quantity=str(qty),
         )
     else:
-        order = place_post_only_with_retries(sym, side, amt)
+        order = place_post_only_with_retries(symbol, side, qty)
 
-    # Ждём и собираем fills из самого order
-    fills = order.get("fills", [])
-    total_qty = sum(float(f["qty"]) for f in fills)
+    order_id = order["orderId"]
+
+    # Ждём секунду, чтобы трейды появились в истории
+    await asyncio.sleep(1)
+
+    # Получаем только трейды этого ордера
+    all_trades = _client.futures_account_trades(symbol=symbol)
+    entry_trades = [t for t in all_trades if t["orderId"] == order_id]
+
+    total_qty = sum(abs(float(t["qty"])) for t in entry_trades)
     entry_price = (
-        sum(float(f["price"]) * float(f["qty"]) for f in fills) / total_qty
+        sum(float(t["price"]) * abs(float(t["qty"])) for t in entry_trades) / total_qty
         if total_qty else 0.0
     )
     entry_comm = sum(
-        float(f["commission"]) for f in fills if f.get("commissionAsset") == "USDT"
+        float(t["commission"])
+        for t in entry_trades
+        if t.get("commissionAsset") == "USDT"
     )
 
-    # Берём данные позиции для маржи и ликвидации
-    pos_info = _client.futures_position_information(symbol=sym)
-    pos = next(x for x in pos_info if x["symbol"] == sym)
+    # Записываем в историю
+    trade_records.setdefault(symbol, []).append({
+        "orderId":   order_id,
+        "qty":       signed_qty,
+        "price":     entry_price,
+        "commission": entry_comm
+    })
+
+    # Берём маржу и ликвидацию из позиции
+    pos_info = _client.futures_position_information(symbol=symbol)
+    pos = next(x for x in pos_info if x["symbol"] == symbol)
     margin_used   = float(pos.get("initialMargin", 0.0))
     liq_price     = float(pos.get("liquidationPrice", 0.0))
-
-    # Сохраняем для закрытия
-    trade_records[sym] = {
-        "entry_price": entry_price,
-        "entry_comm":  entry_comm
-    }
 
     # Баланс USDT
     usdt_balance = next(
@@ -180,46 +137,102 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         0.0
     )
 
-    summary = (
-        f"Символ: {sym}\n"
+    # Ответ в Telegram
+    await update.message.reply_text(
+        f"Символ: {symbol}\n"
         f"Направление: {side}\n"
-        f"Количество: {signed_amt}\n"
+        f"Количество: {signed_qty}\n"
         f"Цена входа: {entry_price}\n"
-        f"Плечо: {leverage}\n"
+        f"Плечо: {lev}\n"
         f"Использованная маржа: {margin_used:.8f}\n"
         f"Цена ликвидации: {liq_price}\n"
         f"Комиссия входа: {entry_comm:.8f}\n"
         f"USDT баланс: {usdt_balance:.8f}"
     )
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
+
+
+async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /active_trade — показывает текущие открытые позиции
+    """
+    msgs = []
+    positions = _client.futures_position_information()
+    for p in positions:
+        amt = float(p.get("positionAmt", 0))
+        if not amt:
+            continue
+        sym = p["symbol"]
+
+        # Объединяем все входные записи для этого символа
+        recs = trade_records.get(sym, [])
+        total_in_qty = sum(abs(r["qty"]) for r in recs)
+        entry_price = (
+            sum(r["price"] * abs(r["qty"]) for r in recs) / total_in_qty
+            if total_in_qty else float(p.get("entryPrice", 0.0))
+        )
+        entry_comm = sum(r["commission"] for r in recs)
+
+        mark_price = float(_client.futures_mark_price(symbol=sym)["markPrice"])
+        pnl_gross  = (mark_price - entry_price) * amt
+        pnl_net    = pnl_gross - entry_comm
+
+        margin_used = float(p.get("initialMargin", 0.0))
+        liq_price   = float(p.get("liquidationPrice", 0.0))
+        lev         = leverage_map.get(sym, int(p.get("leverage", 1)))
+        side_str    = "LONG" if amt > 0 else "SHORT"
+
+        msgs.append(
+            f"Символ: {sym}\n"
+            f"Направление: {side_str}\n"
+            f"Количество: {amt}\n"
+            f"Цена входа: {entry_price}\n"
+            f"Плечо: {lev}\n"
+            f"Использованная маржа: {margin_used:.8f}\n"
+            f"Цена ликвидации: {liq_price}\n"
+            f"PNL брутто: {pnl_gross:.8f}\n"
+            f"Комиссия входа: {entry_comm:.8f}\n"
+            f"PNL нетто: {pnl_net:.8f}"
+        )
+
+    await update.message.reply_text("\n\n".join(msgs) or "No active positions.")
 
 
 async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for sym in settings.symbols:
+    """
+    /close_trades — закрыть все открытые позиции и показать PnL
+    """
+    for sym, recs in list(trade_records.items()):
         amt = get_position_amount(sym)
         if not amt:
             continue
 
-        # Извлекаем записанные entry_price и entry_comm
-        rec = trade_records.pop(sym, {})
-        entry_price = rec.get("entry_price", 0.0)
-        entry_comm  = rec.get("entry_comm",  0.0)
-
-        # Ставим ордер на закрытие
         side = "SELL" if amt > 0 else "BUY"
         cancel_open_orders(sym)
         order = place_post_only_with_retries(sym, side, abs(amt))
+        close_id = order["orderId"]
 
-        # Собираем fills для выхода
-        fills = order.get("fills", [])
-        total_qty = sum(float(f["qty"]) for f in fills)
+        await asyncio.sleep(1)
+        all_trades = _client.futures_account_trades(symbol=sym)
+        exit_trades = [t for t in all_trades if t["orderId"] == close_id]
+
+        total_exit_qty = sum(abs(float(t["qty"])) for t in exit_trades)
         exit_price = (
-            sum(float(f["price"]) * float(f["qty"]) for f in fills) / total_qty
-            if total_qty else 0.0
+            sum(float(t["price"]) * abs(float(t["qty"])) for t in exit_trades) / total_exit_qty
+            if total_exit_qty else 0.0
         )
         exit_comm = sum(
-            float(f["commission"]) for f in fills if f.get("commissionAsset") == "USDT"
+            float(t["commission"])
+            for t in exit_trades
+            if t.get("commissionAsset") == "USDT"
         )
+
+        # Агрегируем входные данные
+        total_in_qty = sum(abs(r["qty"]) for r in recs)
+        entry_price = (
+            sum(r["price"] * abs(r["qty"]) for r in recs) / total_in_qty
+            if total_in_qty else 0.0
+        )
+        entry_comm = sum(r["commission"] for r in recs)
 
         total_comm = entry_comm + exit_comm
         pnl = (exit_price - entry_price) * amt - total_comm
@@ -229,7 +242,7 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
             0.0
         )
 
-        summary = (
+        await update.message.reply_text(
             f"Символ: {sym}\n"
             f"Направление: {side}\n"
             f"Количество: {amt}\n"
@@ -239,27 +252,30 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Реализованный PnL: {pnl:.8f}\n"
             f"Futures USDT баланс: {usdt_balance:.8f}"
         )
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
+
+        # очищаем историю по этому символу
+        trade_records.pop(sym, None)
 
 
 async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /close_orders — отменить все открытые ордера
+    """
     for sym in settings.symbols:
         cancel_open_orders(sym)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="All open orders cancelled.")
+    await update.message.reply_text("All open orders cancelled.")
 
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = [
-        f"{a['asset']}: {a['balance']}"
-        for a in _client.futures_account_balance()
-    ]
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="\n".join(lines) or "No balance data."
-    )
+    """
+    /balance — показать фьючерсный баланс
+    """
+    lines = [f"{a['asset']}: {a['balance']}" for a in _client.futures_account_balance()]
+    await update.message.reply_text("\n".join(lines) or "No balance data.")
 
 
 if __name__ == "__main__":
+    # Настраиваем HTTP-клиент для polling
     request = HTTPXRequest(
         connect_timeout=5.0,
         read_timeout=30.0,
@@ -272,6 +288,8 @@ if __name__ == "__main__":
         .request(request)
         .build()
     )
+
+    # Регистрируем команды
     app.add_handler(CommandHandler("pause", pause))
     app.add_handler(CommandHandler("resume", resume))
     app.add_handler(CommandHandler("create_order", create_order))
@@ -279,4 +297,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("close_trades", close_trades))
     app.add_handler(CommandHandler("close_orders", close_orders))
     app.add_handler(CommandHandler("balance", balance))
+
     app.run_polling()
