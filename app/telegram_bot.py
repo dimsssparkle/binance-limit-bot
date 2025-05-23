@@ -5,6 +5,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.request import HTTPXRequest
 from app.config import settings
 from app.binance_client import (
     get_position_amount,
@@ -235,7 +236,26 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(settings.telegram_token).build()
+    # 1) Создаём HTTPXRequest с нужными таймаутами и повторами:
+    request = HTTPXRequest(
+        # Пулы соединений
+        connection_pool_limits={'max_keepalive_connections': 5, 'max_connections': 10},
+        # Общий timeout на каждый HTTP-запрос
+        timeout=60.0,
+        # timeout на чтение тела ответа
+        read_timeout=30.0,
+        # timeout на запись (если отправляете файлы и т.п.)
+        write_timeout=30.0,
+        # кол-во автоматических повторов при сетевых ошибках
+        retries=5
+    )
+    # 2) Передаём его в билдер:
+    app = (
+        ApplicationBuilder()
+        .token(settings.telegram_token)
+        .request(request)        # <-- вот сюда
+        .build()
+    )
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('resume', resume))
     app.add_handler(CommandHandler('balance', balance))
