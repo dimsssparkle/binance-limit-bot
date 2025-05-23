@@ -1,8 +1,13 @@
+# app/telegram_bot.py
+
 import logging
 from threading import Lock
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes
+)
 from telegram.request import HTTPXRequest
+
 from app.config import settings
 from app.binance_client import (
     get_position_amount,
@@ -10,11 +15,13 @@ from app.binance_client import (
     place_post_only_with_retries,
     _client,
 )
+from app.handlers import handle_signal  # если нужен
+from threading import Lock
 
-# Устанавливаем уровень логирования для httpx
+# Убираем излишние логи httpx
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Общий логгер
+# Настройка логирования
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
@@ -22,11 +29,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
-# Флаги и хранилище
+# Блокировки и состояния
 webhook_lock = Lock()
 webhook_paused = False
+
+# Хранилище для плеча и данных сделки
 leverage_map: dict[str, int] = {}
-# trade_records хранит суммарные данные по входу: общий объём, сумма стоимости, сумма входных комиссий
 trade_records: dict[str, dict] = {}
 
 
@@ -47,7 +55,10 @@ def is_entry_trade(t: dict, is_entry: bool) -> bool:
 
 
 async def sum_commission(symbol: str, amt: float, is_entry: bool) -> float:
-    trades = sorted(_client.futures_account_trades(symbol=symbol), key=lambda t: t['time'])
+    trades = sorted(
+        _client.futures_account_trades(symbol=symbol),
+        key=lambda t: t['time']
+    )
     target_qty = abs(amt)
     filled = 0.0
     comm = 0.0
@@ -79,7 +90,9 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         entry_price = float(pos.get('entryPrice', 0))
         margin_used = float(pos.get('initialMargin', abs(amt * entry_price) / leverage))
         liquidation_price = float(pos.get('liquidationPrice', 0))
-        mark_price = float(_client.futures_mark_price(symbol=symbol).get('markPrice', 0))
+        mark_price = float(
+            _client.futures_mark_price(symbol=symbol).get('markPrice', 0)
+        )
         pnl_gross = (mark_price - entry_price) * amt
 
         entry_comm = await sum_commission(symbol, amt, is_entry=True)
@@ -110,7 +123,7 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(args) < 4 or len(args) > 5:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="Usage: /create_order <SYMBOL> <BUY|SELL> <AMOUNT> <LEVERAGE> [PRICE]"
+            text="Usage: /create_order <SYMBOL> <BUY|SELL|LONG|SHORT> <AMOUNT> <LEVERAGE> [PRICE]"
         )
         return
 
@@ -120,15 +133,20 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     leverage = int(args[3])
     price = float(args[4]) if len(args) == 5 else None
 
-    signed_amt = amt if side == 'BUY' else -amt
+    # Закрываем противоположную позицию, если есть
+    signed_amt = amt if side in ('BUY', 'LONG') else -amt
     existing_amt = get_position_amount(symbol)
     if existing_amt and existing_amt * signed_amt < 0:
-        # закрываем противоположную позицию
         close_side = 'SELL' if existing_amt > 0 else 'BUY'
         cancel_open_orders(symbol)
-        place_post_only_with_retries(symbol, close_side, abs(existing_amt))
+        close_order = place_post_only_with_retries(symbol, close_side, abs(existing_amt))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Closed existing position: order_id={close_order.get('orderId')}"
+        )
         existing_amt = 0.0
 
+    # Устанавливаем плечо и очищаем ордера
     leverage_map[symbol] = leverage
     cancel_open_orders(symbol)
     try:
@@ -136,42 +154,50 @@ async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Leverage change failed: {e}")
 
-    # выставляем основной ордер
-    order = place_post_only_with_retries(symbol, side, amt, price)
+    # Ставим сам ордер
+    if price is not None:
+        # Лимитный GTC-ордер по заданной цене
+        order = _client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type="LIMIT",
+            timeInForce="GTC",
+            price=f"{price:.8f}",
+            quantity=str(amt)
+        )
+    else:
+        # Post-only с retry и автоматическим шардированием по стакану
+        order = place_post_only_with_retries(symbol, side, amt)
+
+    # Вычисляем entry_price
     fills = order.get('fills', []) or []
     if fills:
         total_qty = sum(float(f['qty']) for f in fills)
         entry_price = sum(float(f['price']) * float(f['qty']) for f in fills) / total_qty
     else:
-        entry_price = float(order.get('avgPrice', price or 0.0))
+        entry_price = float(order.get('avgPrice', price or 0))
 
-    # вычисляем комиссию входа
+    # Считаем входную комиссию
     entry_comm = await sum_commission(symbol, signed_amt, is_entry=True)
 
-    # сохраняем данные для последующего закрытия
-    record = trade_records.get(symbol, {
-        'total_qty': 0.0,
-        'entry_value_sum': 0.0,
-        'entry_comm': 0.0
-    })
-    record['total_qty'] += signed_amt
-    record['entry_value_sum'] += signed_amt * entry_price
-    record['entry_comm'] += entry_comm
-    trade_records[symbol] = record
+    # Сохраняем данные для закрытия
+    trade_records[symbol] = {
+        "entry_price": entry_price,
+        "entry_comm": entry_comm
+    }
 
-    # сообщение в телеграм
-    margin_used = abs(signed_amt * entry_price) / leverage if leverage else 0.0
-    liq_price = float(_client.futures_position_information(symbol=symbol)[0].get('liquidationPrice', 0))
+    # Баланс для вывода
+    balances = _client.futures_account_balance()
+    usdt_balance = next((float(a['balance']) for a in balances if a['asset'] == 'USDT'), 0.0)
+
     summary = (
         f"Символ: {symbol}\n"
         f"Направление: {side}\n"
         f"Количество: {signed_amt}\n"
         f"Цена входа: {entry_price}\n"
         f"Плечо: {leverage}\n"
-        f"Использованная маржа: {margin_used:.8f}\n"
-        f"Цена ликвидации: {liq_price}\n"
         f"Комиссия входа: {entry_comm:.8f}\n"
-        f"Futures USDT баланс: {next((float(a['balance']) for a in _client.futures_account_balance() if a['asset']=='USDT'),0.0):.8f}"
+        f"USDT баланс: {usdt_balance:.8f}"
     )
     await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
 
@@ -182,45 +208,42 @@ async def close_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not amt:
             continue
 
-        # получаем накопленные записи по входу
-        record = trade_records.pop(sym, None)
-        if record:
-            total_qty = record['total_qty']
-            entry_price = record['entry_value_sum'] / total_qty if total_qty else 0.0
-            entry_comm = record['entry_comm']
-        else:
-            total_qty = amt
-            entry_price = 0.0
-            entry_comm = 0.0
+        # Достаём сохранённые entry_price и entry_comm
+        record = trade_records.pop(sym, {})
+        entry_price = record.get("entry_price", 0.0)
+        entry_comm = record.get("entry_comm", 0.0)
 
-        # закрываем позицию
-        side = 'SELL' if amt > 0 else 'BUY'
+        # Определяем сторону и ставим ордер на закрытие
+        side = "SELL" if amt > 0 else "BUY"
         cancel_open_orders(sym)
         order = place_post_only_with_retries(sym, side, abs(amt))
-        fills = order.get('fills', []) or []
-        if fills:
-            total_exit_qty = sum(float(f['qty']) for f in fills)
-            exit_price = sum(float(f['price']) * float(f['qty']) for f in fills) / total_exit_qty
-        else:
-            exit_price = float(order.get('avgPrice', 0.0))
 
-        # комиссия выхода
-        exit_comm = await sum_commission(sym, abs(amt), is_entry=False)
+        # Вычисляем exit_price
+        fills = order.get("fills", []) or []
+        if fills:
+            total_qty = sum(float(f["qty"]) for f in fills)
+            exit_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / total_qty
+        else:
+            exit_price = float(order.get("avgPrice", 0.0))
+
+        # Считаем exit_comm
+        exit_comm = await sum_commission(sym, amt, is_entry=False)
         total_comm = entry_comm + exit_comm
 
-        # расчёт PnL
+        # Расчёт PnL
         pnl_gross = (exit_price - entry_price) * amt
         pnl_net = pnl_gross - total_comm
 
-        # баланс
-        usdt_balance = next((float(a['balance']) for a in _client.futures_account_balance() if a['asset']=='USDT'), 0.0)
+        # Баланс
+        balances = _client.futures_account_balance()
+        usdt_balance = next((float(a["balance"]) for a in balances if a["asset"] == "USDT"), 0.0)
 
         summary = (
             f"Символ: {sym}\n"
             f"Направление: {side}\n"
             f"Количество: {amt}\n"
-            f"Цена входа: {entry_price:.2f}\n"
-            f"Цена выхода: {exit_price:.2f}\n"
+            f"Цена входа: {entry_price}\n"
+            f"Цена выхода: {exit_price}\n"
             f"Общая комиссия: {total_comm:.8f}\n"
             f"Реализованный PnL: {pnl_net:.8f}\n"
             f"Futures USDT баланс: {usdt_balance:.8f}"
@@ -237,11 +260,12 @@ async def close_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _client.futures_account_balance()
     lines = [f"{a['asset']}: {a['balance']}" for a in account]
-    text = "\n".join(lines) if lines else "No balance data."
+    text = "\n".join(lines) or "No balance data."
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
 
 
 if __name__ == '__main__':
+    # Настраиваем HTTP-клиент для polling
     request = HTTPXRequest(
         connect_timeout=5.0,
         read_timeout=30.0,
@@ -254,11 +278,15 @@ if __name__ == '__main__':
         .request(request)
         .build()
     )
+
+    # Регистрируем команды
     app.add_handler(CommandHandler('pause', pause))
     app.add_handler(CommandHandler('resume', resume))
     app.add_handler(CommandHandler('balance', balance))
+    app.add_handler(CommandHandler('create_order', create_order))
+    app.add_handler(CommandHandler('active_trade', active_trade))
     app.add_handler(CommandHandler('close_trades', close_trades))
     app.add_handler(CommandHandler('close_orders', close_orders))
-    app.add_handler(CommandHandler('active_trade', active_trade))
-    app.add_handler(CommandHandler('create_order', create_order))
+
+    # Запускаем polling
     app.run_polling()
