@@ -3,19 +3,16 @@
 app/handlers.py
 
 Обработка сигналов: открытие и закрытие позиций с mutex для предотвращения дублирования.
+Без инициализации файлов.
 """
 from pydantic import BaseModel, validator
 from binance.exceptions import BinanceAPIException
 from app.binance_client import (
-    init_data,
     get_position_amount,
     place_post_only_with_retries
 )
 from threading import Lock
 from collections import defaultdict
-
-# Инициализируем папку и файлы
-init_data()
 
 # Мьютексы по символам для синхронизации запросов
 symbol_locks: dict[str, Lock] = defaultdict(Lock)
@@ -42,15 +39,11 @@ class Signal(BaseModel):
 
 
 def handle_signal(data: dict) -> dict:
-    """
-    Обрабатывает сигнал открытия/закрытия с предотвращением параллельных операций по одному символу.
-    """
     sig = Signal(**data)
     lock = symbol_locks[sig.symbol]
     if not lock.acquire(blocking=False):
         return {'status': 'error', 'detail': 'Operation already in progress for symbol'}
     try:
-        # Закрытие позиции
         if sig.action == 'close':
             current_amt = get_position_amount(sig.symbol)
             if current_amt == 0:
@@ -64,7 +57,6 @@ def handle_signal(data: dict) -> dict:
             )
             return {'status': 'ok', 'detail': f"closed_order_id={order['orderId']}"}
 
-        # Открытие позиции
         order = place_post_only_with_retries(
             symbol=sig.symbol,
             side=sig.side,

@@ -2,16 +2,12 @@
 """
 app/binance_client.py
 
-Обёртка над Binance Futures API:
-- Интеграция WebSocket для market data.
-- Динамический ретрай лимитных Post-Only ордеров с вычислением базовой цены из стакана.
-- Логика истории стакана и позиций.
+Обёртка над Binance Futures API без записи на диск.
 """
 import math
 import time
 import logging
 from datetime import datetime
-from pathlib import Path
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from app.config import settings
@@ -23,39 +19,6 @@ logger.setLevel(settings.log_level)
 # Инициализация Binance-клиента
 _client = Client(settings.binance_api_key, settings.binance_api_secret)
 
-# Пути к CSV
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-ORDER_BOOK_HISTORY = DATA_DIR / "order_book_history.csv"
-POSITION_HISTORY   = DATA_DIR / "position_history.csv"
-
-
-def init_data() -> None:
-    """
-    Инициализирует директорию и файлы для логов стакана и позиций.
-    """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not ORDER_BOOK_HISTORY.exists():
-        ORDER_BOOK_HISTORY.write_text("timestamp,symbol,best_bid,best_ask")
-        logger.info(f"Created {ORDER_BOOK_HISTORY}")
-    if not POSITION_HISTORY.exists():
-        POSITION_HISTORY.write_text("timestamp,symbol,positionAmt")
-        logger.info(f"Created {POSITION_HISTORY}")
-
-
-def log_order_book(symbol: str, best_bid: float, best_ask: float) -> None:
-    """Логирует текущие лучшие bid/ask в CSV."""
-    ts = datetime.utcnow().isoformat()
-    with ORDER_BOOK_HISTORY.open("a") as f:
-        f.write(f"{ts},{symbol},{best_bid},{best_ask}")
-
-
-def log_position(symbol: str, position_amt: float) -> None:
-    """Логирует текущий размер позиции в CSV."""
-    ts = datetime.utcnow().isoformat()
-    with POSITION_HISTORY.open("a") as f:
-        f.write(f"{ts},{symbol},{position_amt}")
-
 
 def get_price_filter(symbol: str) -> dict:
     """Возвращает PRICE_FILTER для символа."""
@@ -65,12 +28,14 @@ def get_price_filter(symbol: str) -> dict:
             return next(f for f in s["filters"] if f["filterType"] == "PRICE_FILTER")
     raise ValueError(f"No PRICE_FILTER for symbol {symbol}")
 
+
 def cancel_open_orders(symbol: str, side: str = None) -> None:
     opens = _client.futures_get_open_orders(symbol=symbol)
     for o in opens:
         if o["type"] == "LIMIT" and (side is None or o["side"] == side):
             logger.info(f"Cancelling order {o['orderId']} side={o['side']}")
             _client.futures_cancel_order(symbol=symbol, orderId=o["orderId"])
+
 
 def get_current_book(symbol: str) -> dict:
     """Возвращает лучшие bid/ask из WebSocket или REST."""
@@ -105,22 +70,15 @@ def place_post_only_with_retries(
     max_attempts: int = 10
 ) -> dict:
     """
-    Выставляет post-only лимитный ордер и продолжает попытки размещения при любых отказах,
-    пока не заполнится, либо не исчерпает max_attempts, либо не превысит допустимое отклонение.
-    При этом проверяет текущую позицию и завершает цикл, как только позиция меняется на ожидаемую величину.
-
-    - Для BUY: price_raw = best_bid - tick * attempt;
-    - Для SELL: price_raw = best_ask + tick * attempt;
+    Выставляет post-only лимитный ордер с ретраем, без логирования на диск.
     """
     pf = get_price_filter(symbol)
     tick = float(pf["tickSize"])
-    # Исходная позиция
     initial_pos = get_position_amount(symbol)
     target_pos = initial_pos + quantity if side.upper() == 'BUY' else initial_pos - quantity
     last_order_id = None
 
     for attempt in range(1, max_attempts + 1):
-        # Проверка достижения цели
         current_pos = get_position_amount(symbol)
         if (side.upper() == 'BUY' and current_pos >= target_pos) or \
            (side.upper() == 'SELL' and current_pos <= target_pos):
@@ -129,14 +87,12 @@ def place_post_only_with_retries(
 
         book = get_current_book(symbol)
         best_bid, best_ask = book['bid'], book['ask']
-        # Расчет цены
         if side.upper() == 'BUY':
             price_raw = best_bid - tick * attempt
             base_price = best_bid
         else:
             price_raw = best_ask + tick * attempt
             base_price = best_ask
-        # Проверка отклонения
         max_dev = base_price * max_deviation_pct / 100
         if abs(price_raw - base_price) > max_dev:
             logger.error(f"Exceeded max deviation after {attempt} attempts")
@@ -144,16 +100,13 @@ def place_post_only_with_retries(
         precision = abs(int(round(math.log10(tick))))
         price_str = f"{price_raw:.{precision}f}"
 
-        # Отмена предыдущего ордера
         if last_order_id:
             try:
                 _client.futures_cancel_order(symbol=symbol, orderId=last_order_id)
-                logger.info(f"Cancelled previous order {last_order_id}")
             except Exception:
                 pass
             last_order_id = None
 
-        # Создание нового ордера
         try:
             order = _client.futures_create_order(
                 symbol=symbol,
@@ -174,7 +127,6 @@ def place_post_only_with_retries(
             logger.error(f"Attempt {attempt}: unexpected API error ({e.message})")
             raise
 
-        # Ожидание и проверка статуса
         time.sleep(retry_interval)
         try:
             o = _client.futures_get_order(symbol=symbol, orderId=last_order_id)
@@ -193,13 +145,14 @@ def place_post_only_with_retries(
     logger.error(error)
     raise RuntimeError(error)
 
+
 def get_position_amount(symbol: str) -> float:
-    """Возвращает текущий размер позиции и логирует его."""
+    """Возвращает текущий размер позиции без записи в файл."""
     positions = _client.futures_position_information()
     for p in positions:
         if p['symbol'] == symbol:
             amt = float(p.get('positionAmt', 0))
-            log_position(symbol, amt)
+            logger.debug(f"Position for {symbol}: {amt}")
             return amt
-    log_position(symbol, 0.0)
+    logger.debug(f"No position for {symbol}, returning 0.0")
     return 0.0

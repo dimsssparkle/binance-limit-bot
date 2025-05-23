@@ -1,25 +1,17 @@
+# File: app/main.py
+"""
+Основной модуль Flask-приложения без WebSocket-ендпоинтов и операций с диском.
+"""
 import logging
 import os
 import json
 import time
-from pathlib import Path
 
 from flask import Flask, request, abort, jsonify, send_from_directory
-from flask_sock import Sock
 
 from app.config import settings
 from app.handlers import handle_signal
-from app.binance_client import init_data, _client
-# убираем websocket_manager — будем брать стакан по REST
-# from app.websocket_manager import start_websocket, get_order_book_snapshot
-
-# Настройка директорий
-BASE_DIR = os.path.dirname(__file__)
-STATIC_DIR = os.path.join(os.path.dirname(BASE_DIR), 'app', 'static')
-
-# Запускаем стартовые процессы
-init_data()
-# start_websocket(['ETHUSDT'])  # WebSocket-менеджер больше не используется
+from app.binance_client import _client
 
 # Логирование
 logging.basicConfig(
@@ -27,13 +19,9 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s %(message)s'
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
-DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
-logger.info(f"Data directory initialized at: {DATA_DIR}")
-
-# Инициализация Flask + Sock
-app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
-sock = Sock(app)  # WebSocket инициализация без лишних аргументов
+app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'), static_url_path='/static')
 
 @app.route("/static/<path:filename>")
 def static_files(filename):
@@ -53,47 +41,15 @@ def webhook():
     logger.info(f"Response: {result}")
     return jsonify(result), status_code
 
-@app.route("/debug/files", methods=["GET"])
-def debug_files():
-    try:
-        files = [p.name for p in DATA_DIR.iterdir()]
-        return jsonify({"data_dir": str(DATA_DIR), "files": files}), 200
-    except Exception as e:
-        logger.error(f"Error reading data dir: {e}")
-        return jsonify({"error": str(e)}), 500
-
-# @sock.route('/ws')
-# def websocket(ws):
-#     """
-#     Оставлен для совместимости, но клиент теперь использует HTTP-polling.
-#     """
-#     logger.info("WebSocket connected")
-#     try:
-#         while True:
-#             # Можно оставить, но клиент им не пользуется
-#             book = {}  # заглушка
-#             ws.send(json.dumps(book))
-#             time.sleep(0.1)
-#     except Exception as e:
-#         logger.error(f"WebSocket error: {e}")
-
 @app.route("/api/orderbook", methods=["GET"])
 def api_orderbook():
-    """
-    Возвращает топ-20 уровней стакана ETHUSDT через REST-запрос к Binance.
-    """
     try:
         resp = _client.futures_order_book(symbol="ETHUSDT", limit=20)
-        data = {
-            "bids": resp.get("bids", []),
-            "asks": resp.get("asks", []),
-        }
+        data = {"bids": resp.get("bids", []), "asks": resp.get("asks", [])}
         return jsonify(data), 200
     except Exception as e:
         logger.error(f"Failed to fetch order book via REST: {e}")
         return jsonify({"bids": [], "asks": []}), 500
 
 if __name__ == "__main__":
-    cwd = Path().resolve()
-    logger.info(f"Starting locally, CWD: {cwd}")
     app.run(host=settings.host, port=settings.port)
