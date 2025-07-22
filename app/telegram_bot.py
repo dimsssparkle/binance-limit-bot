@@ -171,7 +171,8 @@ async def active_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         margin_used = float(p.get("initialMargin", 0.0))
         liq_price   = float(p.get("liquidationPrice", 0.0))
-        lev         = leverage_map.get(sym, int(p.get("leverage", 1)))
+        # lev         = leverage_map.get(sym, int(p.get("leverage", 1)))
+        lev         = int(p.get("leverage", 1))
         side_str    = "LONG" if amt > 0 else "SHORT"
 
         msgs.append(
